@@ -38,7 +38,11 @@ coefficients. Music EQ is not supported either (the coefficients come from a nat
 official app); see [docs/EQ-NOTES.md](docs/EQ-NOTES.md). **Use at your own risk**: writing settings to a
 device can change how it behaves.
 
+## Languages
+The tray app is available in English and Portuguese (Brazil), automatically matching your Windows display language. You can change the language anytime from the menu. To add a translation or customize one, see [docs/TRANSLATING.md](docs/TRANSLATING.md).
+
 ## Documentation
+- [docs/TRANSLATING.md](docs/TRANSLATING.md): how to add or customize translations.
 - [docs/FUNCTIONS.md](docs/FUNCTIONS.md): mapped and verified commands (id, payload, classification).
 - [docs/FUNCTIONS_full.md](docs/FUNCTIONS_full.md): index of the 94 methods of the app (**unverified**).
 - [docs/EQ-NOTES.md](docs/EQ-NOTES.md): why music EQ is not supported.

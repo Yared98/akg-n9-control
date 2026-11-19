@@ -8,16 +8,19 @@
 //! Reading runs on the event loop thread (blocks ~0.5 s every 30 s), via `ControlFlow::WaitUntil`.
 #![windows_subsystem = "windows"]
 
+mod i18n;
 mod mediakey;
 
+use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
+use i18n::{available, save_lang, I18n, LangInfo};
 use mediakey::PlayStopHook;
 
 use akg_race::{
     apply_anc, apply_anc_level, apply_audio_limiter, apply_auto_play_pause,
     apply_auto_power_off, apply_chat_optimizer, apply_find_me, apply_hi_res, apply_low_vol_eq,
-    apply_lr_balance, apply_shutdown, apply_safe_sound, apply_spatial_3d, apply_speak_to_chat,
+    apply_lr_balance, apply_safe_sound, apply_shutdown, apply_spatial_3d, apply_speak_to_chat,
     apply_voice_prompt, apply_voiceaware, apply_voiceaware_level, hid::HidRace, parse_anc,
     parse_audio_limiter_status, parse_auto_power_off_status, parse_battery,
     parse_chat_optimizer_status, parse_fw_version, parse_hi_res_status, parse_low_vol_eq_status,
@@ -33,7 +36,7 @@ use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tauri_winrt_notification::Toast;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tray_icon::{TrayIconBuilder, TrayIconEvent};
+use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const POLL: Duration = Duration::from_secs(30);
 /// While "find my headphones" is ringing: short interval to detect Play, and safety limit that
@@ -42,7 +45,7 @@ const RING_POLL: Duration = Duration::from_millis(100);
 const RING_MAX: Duration = Duration::from_secs(120);
 
 /// State read from the headset in a cycle.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Status {
     connected: bool,
     battery: Option<u8>,
@@ -76,14 +79,14 @@ fn nvkey_string(report: &[u8]) -> Option<String> {
     }
 }
 
-/// Auto power-off presets (label, enabled, minutes).
-const AUTOOFF_OPTS: [(&str, bool, u16); 6] = [
-    ("Nunca", false, 0),
-    ("5 min", true, 5),
-    ("10 min", true, 10),
-    ("15 min", true, 15),
-    ("30 min", true, 30),
-    ("60 min", true, 60),
+/// Auto power-off presets: (enabled, minutes).
+const AUTOOFF_OPTS: [(bool, u16); 6] = [
+    (false, 0),
+    (true, 5),
+    (true, 10),
+    (true, 15),
+    (true, 30),
+    (true, 60),
 ];
 
 /// Sends a query and tries to read the reply for a few cycles: the dongle returns the frame only after
@@ -222,23 +225,29 @@ fn apply_va_level(level: u16) {
     }
 }
 
-fn anc_label(mode: AncMode, level: u16) -> String {
+fn anc_label(i18n: &I18n, mode: AncMode, level: u16) -> String {
     match mode {
-        AncMode::Off => "desligado".into(),
-        AncMode::Anc => format!("ANC {level}"),
-        AncMode::TalkThru => "TalkThru".into(),
-        AncMode::Ambient => format!("Ambiente {level}"),
-        AncMode::Other(f) => format!("modo 0x{f:02X} ({level})"),
+        AncMode::Off => i18n.t("anc.off"),
+        AncMode::Anc => i18n.tf("anc.anc", &[("level", &level.to_string())]),
+        AncMode::TalkThru => i18n.t("anc.talkthru"),
+        AncMode::Ambient => i18n.tf("anc.ambient", &[("level", &level.to_string())]),
+        AncMode::Other(f) => i18n.tf(
+            "anc.other",
+            &[("mode", &format!("0x{f:02X}")), ("level", &level.to_string())],
+        ),
     }
 }
 
-fn tooltip(s: &Status) -> String {
+fn tooltip(i18n: &I18n, s: &Status) -> String {
     if !s.connected {
-        return "AKG N9 · desconectado".into();
+        return i18n.t("tooltip.disconnected");
     }
     let bat = s.battery.map(|b| format!("{b}%")).unwrap_or_else(|| "?".into());
-    let anc = s.anc.map(|(m, l)| anc_label(m, l)).unwrap_or_else(|| "?".into());
-    format!("AKG N9 · {bat} · {anc}")
+    let anc = s
+        .anc
+        .map(|(m, l)| anc_label(i18n, m, l))
+        .unwrap_or_else(|| "?".into());
+    i18n.tf("tooltip.status", &[("battery", &bat), ("anc", &anc)])
 }
 
 /// Icon color based on battery: teal (ok), amber (medium), red (low), gray (no reading).
@@ -252,13 +261,11 @@ fn icon_color(s: &Status) -> [u8; 3] {
     }
 }
 
-/// 32×32 icon drawn in memory: headphone silhouette (headband arc + two earcups),
-/// in the given color, transparent background. No external file.
 /// Native Windows toast warning of low battery (uses PowerShell app id, no registration).
-fn notify_low_battery(pct: u8) {
+fn notify_low_battery(i18n: &I18n, pct: u8) {
     let _ = Toast::new(Toast::POWERSHELL_APP_ID)
-        .title("AKG N9 — bateria baixa")
-        .text1(&format!("Bateria em {pct}%. Hora de carregar o fone."))
+        .title(&i18n.t("toast.title"))
+        .text1(&i18n.tf("toast.body", &[("percent", &pct.to_string())]))
         .show();
 }
 
@@ -291,147 +298,467 @@ fn make_icon(rgb: [u8; 3]) -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(rgba, N as u32, N as u32).expect("icon")
 }
 
-fn main() {
-    let event_loop = EventLoopBuilder::new().build();
-    let menu = Menu::new();
-
+struct Ui {
     // Status lines (disabled).
-    let mi_bat = MenuItem::new("Bateria: —", false, None);
-    let mi_fw = MenuItem::new("Firmware: —", false, None);
+    mi_bat: MenuItem,
+    mi_fw: MenuItem,
 
     // Listening modes — "radio" checkboxes: the active one is checked.
-    let mi_off = CheckMenuItem::new("ANC desligado", true, false, None);
-    let mi_anc = CheckMenuItem::new("ANC ligado", true, false, None);
-    let mi_talk = CheckMenuItem::new("TalkThru", true, false, None);
-    let mi_amb = CheckMenuItem::new("Ambiente", true, false, None);
+    mi_off: CheckMenuItem,
+    mi_anc: CheckMenuItem,
+    mi_talk: CheckMenuItem,
+    mi_amb: CheckMenuItem,
 
     // Level 1..=7 — "radio" checkboxes.
-    let levels: Vec<CheckMenuItem> = (1..=7)
-        .map(|n| CheckMenuItem::new(format!("Nível {n}"), true, false, None))
-        .collect();
-    let submenu_level = Submenu::new("Nível", true);
-    submenu_level
-        .append_items(
-            &levels
-                .iter()
-                .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
-                .collect::<Vec<_>>(),
-        )
-        .expect("submenu nivel");
+    submenu_level: Submenu,
+    levels: Vec<CheckMenuItem>,
 
     // Voice prompts + Speak-to-Chat — state toggles.
-    let mi_vp = CheckMenuItem::new("Avisos de voz", true, false, None);
-    let mi_stc = CheckMenuItem::new("Speak-to-Chat", true, false, None);
+    mi_vp: CheckMenuItem,
+    mi_stc: CheckMenuItem,
 
     // Auto-off — "radio" checkboxes with active preset checked.
-    let autooff: Vec<CheckMenuItem> = AUTOOFF_OPTS
-        .iter()
-        .map(|(l, _, _)| CheckMenuItem::new(*l, true, false, None))
-        .collect();
-    let submenu_autooff = Submenu::new("Auto-desligar", true);
-    submenu_autooff
-        .append_items(
-            &autooff
-                .iter()
-                .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
-                .collect::<Vec<_>>(),
-        )
-        .expect("submenu autooff");
+    submenu_autooff: Submenu,
+    autooff: Vec<CheckMenuItem>,
 
-    // Find my headphones — one-shot actions (not a state toggle).
-    // Find my headphones: single checkbox. Checked = ringing; unchecking (or pressing play on the headset) stops.
-    let mi_find = CheckMenuItem::new("Achar fone (tocar som)", true, false, None);
-    let r_find = mi_find.clone();
+    // Find my headphones: single checkbox.
+    mi_find: CheckMenuItem,
 
     // Features — state toggles.
-    let mi_lim = CheckMenuItem::new("Limitador", true, false, None);
-    let mi_chat = CheckMenuItem::new("Chat Optimizer", true, false, None);
-    let mi_hr = CheckMenuItem::new("Hi-Res", true, false, None);
-    let mi_ss = CheckMenuItem::new("Safe Sound", true, false, None);
-    let mi_lr = CheckMenuItem::new("Balanço L/R (centralizar)", true, false, None);
-    let mi_low_eq = CheckMenuItem::new("EQ volume baixo", true, false, None);
-    let mi_pause = CheckMenuItem::new("Pausar ao tirar o fone", true, false, None);
-    let mi_va = CheckMenuItem::new("VoiceAware", true, false, None);
-    let submenu_recursos = Submenu::new("Recursos", true);
-    submenu_recursos
-        .append_items(&[
-            &mi_lim,
-            &mi_chat,
-            &mi_hr,
-            &mi_ss,
-            &mi_lr,
-            &mi_low_eq,
-            &mi_pause,
-            &mi_va,
-        ])
-        .expect("submenu recursos");
+    submenu_recursos: Submenu,
+    mi_lim: CheckMenuItem,
+    mi_chat: CheckMenuItem,
+    mi_hr: CheckMenuItem,
+    mi_ss: CheckMenuItem,
+    mi_lr: CheckMenuItem,
+    mi_low_eq: CheckMenuItem,
+    mi_pause: CheckMenuItem,
+    mi_va: CheckMenuItem,
 
     // VoiceAware level 1..=5 — "radio" checkboxes.
-    let va_levels: Vec<CheckMenuItem> = (1..=5)
-        .map(|n| CheckMenuItem::new(format!("Nível {n}"), true, false, None))
-        .collect();
-    let submenu_va_level = Submenu::new("VoiceAware nível", true);
-    submenu_va_level
-        .append_items(
-            &va_levels
-                .iter()
-                .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
-                .collect::<Vec<_>>(),
-        )
-        .expect("submenu voiceaware nivel");
-
+    submenu_va_level: Submenu,
+    va_levels: Vec<CheckMenuItem>,
 
     // Spatial sound — "radio" checkboxes: Off / Movie / Music / Game.
-    let mi_sp_off = CheckMenuItem::new("Desligado", true, false, None);
-    let mi_sp_movie = CheckMenuItem::new("Filme", true, false, None);
-    let mi_sp_music = CheckMenuItem::new("Música", true, false, None);
-    let mi_sp_game = CheckMenuItem::new("Jogo", true, false, None);
-    let submenu_spatial = Submenu::new("Som espacial", true);
-    submenu_spatial
-        .append_items(&[&mi_sp_off, &mi_sp_movie, &mi_sp_music, &mi_sp_game])
-        .expect("submenu som espacial");
+    submenu_spatial: Submenu,
+    mi_sp_off: CheckMenuItem,
+    mi_sp_movie: CheckMenuItem,
+    mi_sp_music: CheckMenuItem,
+    mi_sp_game: CheckMenuItem,
 
     // Diagnostics — static reading (NVKey). Disabled lines.
-    let mi_diag_serial = MenuItem::new("Série: —", false, None);
-    let mi_diag_chip = MenuItem::new("Chip: —", false, None);
-    let mi_diag_fw = MenuItem::new("Firmware: —", false, None);
-    let submenu_diag = Submenu::new("Diagnóstico", true);
-    submenu_diag
-        .append_items(&[&mi_diag_serial, &mi_diag_chip, &mi_diag_fw])
-        .expect("submenu diag");
+    submenu_diag: Submenu,
+    mi_diag_serial: MenuItem,
+    mi_diag_chip: MenuItem,
+    mi_diag_fw: MenuItem,
 
-    let mi_shutdown = MenuItem::new("Desligar o fone", true, None);
-    let mi_quit = MenuItem::new("Sair", true, None);
+    // Language selector — radio checkboxes.
+    submenu_lang: Submenu,
+    lang_items: Vec<(String, CheckMenuItem)>,
 
-    menu.append_items(&[
-        &mi_bat,
-        &mi_fw,
-        &PredefinedMenuItem::separator(),
-        &mi_off,
-        &mi_anc,
-        &mi_talk,
-        &mi_amb,
-        &submenu_level,
-        &PredefinedMenuItem::separator(),
-        &mi_vp,
-        &mi_stc,
-        &submenu_autooff,
-        &submenu_recursos,
-        &submenu_va_level,
-        &submenu_spatial,
-        &submenu_diag,
-        &PredefinedMenuItem::separator(),
-        &mi_find,
-        &PredefinedMenuItem::separator(),
-        &mi_shutdown,
-        &PredefinedMenuItem::separator(),
-        &mi_quit,
-    ])
-    .expect("menu");
+    // Actions
+    mi_shutdown: MenuItem,
+    mi_quit: MenuItem,
+}
+
+impl Ui {
+    fn new(i18n: &I18n, langs: &[LangInfo]) -> (Self, Menu) {
+        let menu = Menu::new();
+
+        let mi_bat = MenuItem::new(
+            i18n.tf("status.battery", &[("value", &i18n.t("status.na"))]),
+            false,
+            None,
+        );
+        let mi_fw = MenuItem::new(
+            i18n.tf("status.firmware", &[("value", &i18n.t("status.na"))]),
+            false,
+            None,
+        );
+
+        let mi_off = CheckMenuItem::new(i18n.t("menu.anc_off"), true, false, None);
+        let mi_anc = CheckMenuItem::new(i18n.t("menu.anc_on"), true, false, None);
+        let mi_talk = CheckMenuItem::new(i18n.t("menu.talkthru"), true, false, None);
+        let mi_amb = CheckMenuItem::new(i18n.t("menu.ambient"), true, false, None);
+
+        let levels: Vec<CheckMenuItem> = (1..=7)
+            .map(|n| {
+                CheckMenuItem::new(
+                    i18n.tf("menu.level_n", &[("n", &n.to_string())]),
+                    true,
+                    false,
+                    None,
+                )
+            })
+            .collect();
+        let submenu_level = Submenu::new(i18n.t("menu.level"), true);
+        submenu_level
+            .append_items(
+                &levels
+                    .iter()
+                    .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
+                    .collect::<Vec<_>>(),
+            )
+            .expect("submenu level");
+
+        let mi_vp = CheckMenuItem::new(i18n.t("menu.voice_prompts"), true, false, None);
+        let mi_stc = CheckMenuItem::new(i18n.t("menu.speak_to_chat"), true, false, None);
+
+        let autooff: Vec<CheckMenuItem> = AUTOOFF_OPTS
+            .iter()
+            .map(|(en, min)| {
+                let label = if !en {
+                    i18n.t("autooff.never")
+                } else {
+                    i18n.tf("autooff.minutes", &[("n", &min.to_string())])
+                };
+                CheckMenuItem::new(label, true, false, None)
+            })
+            .collect();
+        let submenu_autooff = Submenu::new(i18n.t("menu.autooff"), true);
+        submenu_autooff
+            .append_items(
+                &autooff
+                    .iter()
+                    .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
+                    .collect::<Vec<_>>(),
+            )
+            .expect("submenu autooff");
+
+        let mi_find = CheckMenuItem::new(i18n.t("menu.find_headphones"), true, false, None);
+
+        let mi_lim = CheckMenuItem::new(i18n.t("menu.limiter"), true, false, None);
+        let mi_chat = CheckMenuItem::new(i18n.t("menu.chat_optimizer"), true, false, None);
+        let mi_hr = CheckMenuItem::new(i18n.t("menu.hi_res"), true, false, None);
+        let mi_ss = CheckMenuItem::new(i18n.t("menu.safe_sound"), true, false, None);
+        let mi_lr = CheckMenuItem::new(i18n.t("menu.lr_balance"), true, false, None);
+        let mi_low_eq = CheckMenuItem::new(i18n.t("menu.low_volume_eq"), true, false, None);
+        let mi_pause = CheckMenuItem::new(i18n.t("menu.pause_on_remove"), true, false, None);
+        let mi_va = CheckMenuItem::new(i18n.t("menu.voiceaware"), true, false, None);
+        let submenu_recursos = Submenu::new(i18n.t("menu.features"), true);
+        submenu_recursos
+            .append_items(&[
+                &mi_lim,
+                &mi_chat,
+                &mi_hr,
+                &mi_ss,
+                &mi_lr,
+                &mi_low_eq,
+                &mi_pause,
+                &mi_va,
+            ])
+            .expect("submenu features");
+
+        let va_levels: Vec<CheckMenuItem> = (1..=5)
+            .map(|n| {
+                CheckMenuItem::new(
+                    i18n.tf("menu.level_n", &[("n", &n.to_string())]),
+                    true,
+                    false,
+                    None,
+                )
+            })
+            .collect();
+        let submenu_va_level = Submenu::new(i18n.t("menu.voiceaware_level"), true);
+        submenu_va_level
+            .append_items(
+                &va_levels
+                    .iter()
+                    .map(|m| m as &dyn tray_icon::menu::IsMenuItem)
+                    .collect::<Vec<_>>(),
+            )
+            .expect("submenu voiceaware level");
+
+        let mi_sp_off = CheckMenuItem::new(i18n.t("menu.spatial_off"), true, false, None);
+        let mi_sp_movie = CheckMenuItem::new(i18n.t("menu.spatial_movie"), true, false, None);
+        let mi_sp_music = CheckMenuItem::new(i18n.t("menu.spatial_music"), true, false, None);
+        let mi_sp_game = CheckMenuItem::new(i18n.t("menu.spatial_game"), true, false, None);
+        let submenu_spatial = Submenu::new(i18n.t("menu.spatial_sound"), true);
+        submenu_spatial
+            .append_items(&[&mi_sp_off, &mi_sp_movie, &mi_sp_music, &mi_sp_game])
+            .expect("submenu spatial sound");
+
+        let mi_diag_serial = MenuItem::new(
+            i18n.tf("diag.serial", &[("value", &i18n.t("status.na"))]),
+            false,
+            None,
+        );
+        let mi_diag_chip = MenuItem::new(
+            i18n.tf("diag.chip", &[("value", &i18n.t("status.na"))]),
+            false,
+            None,
+        );
+        let mi_diag_fw = MenuItem::new(
+            i18n.tf("diag.firmware", &[("value", &i18n.t("status.na"))]),
+            false,
+            None,
+        );
+        let submenu_diag = Submenu::new(i18n.t("menu.diag"), true);
+        submenu_diag
+            .append_items(&[&mi_diag_serial, &mi_diag_chip, &mi_diag_fw])
+            .expect("submenu diag");
+
+        let submenu_lang = Submenu::new(i18n.t("menu.language"), true);
+        let mut lang_items = Vec::new();
+        for lang in langs {
+            let is_active = lang.code.eq_ignore_ascii_case(i18n.code());
+            let item = CheckMenuItem::new(&lang.name, true, is_active, None);
+            submenu_lang.append(&item).expect("append lang item");
+            lang_items.push((lang.code.clone(), item));
+        }
+
+        let mi_shutdown = MenuItem::new(i18n.t("menu.power_off"), true, None);
+        let mi_quit = MenuItem::new(i18n.t("menu.quit"), true, None);
+
+        menu.append_items(&[
+            &mi_bat,
+            &mi_fw,
+            &PredefinedMenuItem::separator(),
+            &mi_off,
+            &mi_anc,
+            &mi_talk,
+            &mi_amb,
+            &submenu_level,
+            &PredefinedMenuItem::separator(),
+            &mi_vp,
+            &mi_stc,
+            &submenu_autooff,
+            &submenu_recursos,
+            &submenu_va_level,
+            &submenu_spatial,
+            &submenu_diag,
+            &PredefinedMenuItem::separator(),
+            &mi_find,
+            &PredefinedMenuItem::separator(),
+            &mi_shutdown,
+            &submenu_lang,
+            &PredefinedMenuItem::separator(),
+            &mi_quit,
+        ])
+        .expect("menu");
+
+        (
+            Self {
+                mi_bat,
+                mi_fw,
+                mi_off,
+                mi_anc,
+                mi_talk,
+                mi_amb,
+                submenu_level,
+                levels,
+                mi_vp,
+                mi_stc,
+                submenu_autooff,
+                autooff,
+                mi_find,
+                submenu_recursos,
+                mi_lim,
+                mi_chat,
+                mi_hr,
+                mi_ss,
+                mi_lr,
+                mi_low_eq,
+                mi_pause,
+                mi_va,
+                submenu_va_level,
+                va_levels,
+                submenu_spatial,
+                mi_sp_off,
+                mi_sp_movie,
+                mi_sp_music,
+                mi_sp_game,
+                submenu_diag,
+                mi_diag_serial,
+                mi_diag_chip,
+                mi_diag_fw,
+                submenu_lang,
+                lang_items,
+                mi_shutdown,
+                mi_quit,
+            },
+            menu,
+        )
+    }
+
+    fn relabel(&self, i18n: &I18n) {
+        self.mi_off.set_text(i18n.t("menu.anc_off"));
+        self.mi_anc.set_text(i18n.t("menu.anc_on"));
+        self.mi_talk.set_text(i18n.t("menu.talkthru"));
+        self.mi_amb.set_text(i18n.t("menu.ambient"));
+
+        self.submenu_level.set_text(i18n.t("menu.level"));
+        for (i, it) in self.levels.iter().enumerate() {
+            it.set_text(i18n.tf("menu.level_n", &[("n", &(i + 1).to_string())]));
+        }
+
+        self.mi_vp.set_text(i18n.t("menu.voice_prompts"));
+        self.mi_stc.set_text(i18n.t("menu.speak_to_chat"));
+
+        self.submenu_autooff.set_text(i18n.t("menu.autooff"));
+        for (i, it) in self.autooff.iter().enumerate() {
+            let (en, min) = AUTOOFF_OPTS[i];
+            let label = if !en {
+                i18n.t("autooff.never")
+            } else {
+                i18n.tf("autooff.minutes", &[("n", &min.to_string())])
+            };
+            it.set_text(label);
+        }
+
+        self.mi_find.set_text(i18n.t("menu.find_headphones"));
+
+        self.submenu_recursos.set_text(i18n.t("menu.features"));
+        self.mi_lim.set_text(i18n.t("menu.limiter"));
+        self.mi_chat.set_text(i18n.t("menu.chat_optimizer"));
+        self.mi_hr.set_text(i18n.t("menu.hi_res"));
+        self.mi_ss.set_text(i18n.t("menu.safe_sound"));
+        self.mi_lr.set_text(i18n.t("menu.lr_balance"));
+        self.mi_low_eq.set_text(i18n.t("menu.low_volume_eq"));
+        self.mi_pause.set_text(i18n.t("menu.pause_on_remove"));
+        self.mi_va.set_text(i18n.t("menu.voiceaware"));
+
+        self.submenu_va_level.set_text(i18n.t("menu.voiceaware_level"));
+        for (i, it) in self.va_levels.iter().enumerate() {
+            it.set_text(i18n.tf("menu.level_n", &[("n", &(i + 1).to_string())]));
+        }
+
+        self.submenu_spatial.set_text(i18n.t("menu.spatial_sound"));
+        self.mi_sp_off.set_text(i18n.t("menu.spatial_off"));
+        self.mi_sp_movie.set_text(i18n.t("menu.spatial_movie"));
+        self.mi_sp_music.set_text(i18n.t("menu.spatial_music"));
+        self.mi_sp_game.set_text(i18n.t("menu.spatial_game"));
+
+        self.submenu_diag.set_text(i18n.t("menu.diag"));
+        self.submenu_lang.set_text(i18n.t("menu.language"));
+
+        self.mi_shutdown.set_text(i18n.t("menu.power_off"));
+        self.mi_quit.set_text(i18n.t("menu.quit"));
+    }
+
+    fn update_lang_checks(&self, active_code: &str) {
+        for (code, item) in &self.lang_items {
+            item.set_checked(code.eq_ignore_ascii_case(active_code));
+        }
+    }
+
+    fn render(&self, s: &Status, i18n: &I18n, tray: &TrayIcon) {
+        let _ = tray.set_tooltip(Some(tooltip(i18n, s)));
+        let _ = tray.set_icon(Some(make_icon(icon_color(s))));
+
+        let bat_val = match s.battery {
+            Some(b) => format!("{b}%"),
+            None => {
+                if s.connected {
+                    "?".into()
+                } else {
+                    i18n.t("status.disconnected")
+                }
+            }
+        };
+        self.mi_bat
+            .set_text(i18n.tf("status.battery", &[("value", &bat_val)]));
+
+        let na = i18n.t("status.na");
+        let fw_val = s.fw.as_deref().unwrap_or(&na);
+        self.mi_fw
+            .set_text(i18n.tf("status.firmware", &[("value", fw_val)]));
+
+        // Diagnostics (static).
+        let serial_val = s.serial.as_deref().unwrap_or(&na);
+        self.mi_diag_serial
+            .set_text(i18n.tf("diag.serial", &[("value", serial_val)]));
+
+        let chip_val = s.chip.as_deref().unwrap_or(&na);
+        self.mi_diag_chip
+            .set_text(i18n.tf("diag.chip", &[("value", chip_val)]));
+
+        let diag_fw_val = s.fw.as_deref().unwrap_or(&na);
+        self.mi_diag_fw
+            .set_text(i18n.tf("diag.firmware", &[("value", diag_fw_val)]));
+
+        // ANC modes: checks the active one.
+        let mode = s.anc.map(|(m, _)| m);
+        self.mi_off.set_checked(mode == Some(AncMode::Off));
+        self.mi_anc.set_checked(mode == Some(AncMode::Anc));
+        self.mi_talk.set_checked(mode == Some(AncMode::TalkThru));
+        self.mi_amb.set_checked(mode == Some(AncMode::Ambient));
+
+        // Level: checks the active one (1..=7).
+        let lvl = s.anc.map(|(_, l)| l);
+        for (i, it) in self.levels.iter().enumerate() {
+            it.set_checked(lvl == Some((i + 1) as u16));
+        }
+
+        // Spatial sound: checks the active one (Off when !on; otherwise Movie/Music/Game according to type 0/1/2).
+        if let Some((on, kind)) = s.spatial_full {
+            self.mi_sp_off.set_checked(!on);
+            self.mi_sp_movie.set_checked(on && kind == 0);
+            self.mi_sp_music.set_checked(on && kind == 1);
+            self.mi_sp_game.set_checked(on && kind == 2);
+        }
+
+        // State toggles: only updates when GET replied (otherwise keeps the last state).
+        if let Some(v) = s.vp {
+            self.mi_vp.set_checked(v);
+        }
+        if let Some(v) = s.stc {
+            self.mi_stc.set_checked(v);
+        }
+        if let Some(v) = s.limiter {
+            self.mi_lim.set_checked(v);
+        }
+        if let Some(v) = s.chat {
+            self.mi_chat.set_checked(v);
+        }
+        if let Some(v) = s.hi_res {
+            self.mi_hr.set_checked(v);
+        }
+        if let Some(v) = s.safe_sound {
+            self.mi_ss.set_checked(v);
+        }
+        if let Some(v) = s.lr {
+            self.mi_lr.set_checked(v);
+        }
+        if let Some(v) = s.low_eq {
+            self.mi_low_eq.set_checked(v);
+        }
+        if let Some(v) = s.voiceaware {
+            self.mi_va.set_checked(v);
+        }
+
+        // VoiceAware level: checks the active one (1..=5).
+        let va_lvl = s.voiceaware_level;
+        for (i, it) in self.va_levels.iter().enumerate() {
+            it.set_checked(va_lvl == Some((i + 1) as u16));
+        }
+
+        // Auto-off: checks the active preset.
+        for (i, it) in self.autooff.iter().enumerate() {
+            let (en, min) = AUTOOFF_OPTS[i];
+            let checked = match s.auto_off {
+                Some((false, _)) => !en,           // Never
+                Some((true, t)) => en && t == min, // minutes preset
+                None => false,
+            };
+            it.set_checked(checked);
+        }
+
+        // Language radio check
+        self.update_lang_checks(i18n.code());
+    }
+}
+
+fn main() {
+    let mut i18n = I18n::startup();
+    let langs = available();
+
+    let event_loop = EventLoopBuilder::new().build();
+    let (ui, menu) = Ui::new(&i18n, &langs);
 
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("AKG N9 · iniciando…")
+        .with_tooltip(i18n.t("tooltip.starting"))
         .with_icon(make_icon([0x80, 0x80, 0x80]))
         .build()
         .expect("tray");
@@ -439,119 +766,26 @@ fn main() {
     let menu_rx = MenuEvent::receiver();
     let _tray_rx = TrayIconEvent::receiver();
 
-    // Clones for refresh (set_checked); originals remain for click handling.
-    let (r_off, r_anc, r_talk, r_amb) = (mi_off.clone(), mi_anc.clone(), mi_talk.clone(), mi_amb.clone());
-    let r_levels: Vec<CheckMenuItem> = levels.iter().map(|m| m.clone()).collect();
-    let (r_vp, r_stc) = (mi_vp.clone(), mi_stc.clone());
-    let r_autooff: Vec<CheckMenuItem> = autooff.iter().map(|m| m.clone()).collect();
-    let (r_sp_off, r_sp_movie, r_sp_music, r_sp_game) = (
-        mi_sp_off.clone(),
-        mi_sp_movie.clone(),
-        mi_sp_music.clone(),
-        mi_sp_game.clone(),
-    );
-    let (r_lim, r_chat, r_hr) = (mi_lim.clone(), mi_chat.clone(), mi_hr.clone());
-    let (r_ss, r_lr, r_low_eq) = (mi_ss.clone(), mi_lr.clone(), mi_low_eq.clone());
-    let r_va = mi_va.clone();
-    let r_va_levels: Vec<CheckMenuItem> = va_levels.iter().map(|m| m.clone()).collect();
-
     // Battery notification hysteresis: alerts ≤15%, rearms ≥25% (avoids repeating every cycle).
     let low_notified = std::cell::Cell::new(false);
+    let last_status = RefCell::new(Status::default());
 
-    let refresh = move |tray: &tray_icon::TrayIcon| {
+    let refresh = |status_holder: &RefCell<Status>,
+                   i18n: &I18n,
+                   ui: &Ui,
+                   tray: &TrayIcon,
+                   low_notified: &std::cell::Cell<bool>| {
         let s = read_status();
-        let _ = tray.set_tooltip(Some(tooltip(&s)));
-        let _ = tray.set_icon(Some(make_icon(icon_color(&s))));
         if let Some(b) = s.battery {
             if b <= 15 && !low_notified.get() {
-                notify_low_battery(b);
+                notify_low_battery(i18n, b);
                 low_notified.set(true);
             } else if b >= 25 {
                 low_notified.set(false);
             }
         }
-        mi_bat.set_text(format!(
-            "Bateria: {}",
-            s.battery
-                .map(|b| format!("{b}%"))
-                .unwrap_or_else(|| if s.connected { "?".into() } else { "desconectado".into() })
-        ));
-        mi_fw.set_text(format!("Firmware: {}", s.fw.clone().unwrap_or_else(|| "—".into())));
-        // Diagnostics (static).
-        if let Some(v) = s.serial.clone() {
-            mi_diag_serial.set_text(format!("Série: {v}"));
-        }
-        if let Some(v) = s.chip.clone() {
-            mi_diag_chip.set_text(format!("Chip: {v}"));
-        }
-        mi_diag_fw.set_text(format!("Firmware: {}", s.fw.clone().unwrap_or_else(|| "—".into())));
-
-        // ANC modes: checks the active one.
-        let mode = s.anc.map(|(m, _)| m);
-        r_off.set_checked(mode == Some(AncMode::Off));
-        r_anc.set_checked(mode == Some(AncMode::Anc));
-        r_talk.set_checked(mode == Some(AncMode::TalkThru));
-        r_amb.set_checked(mode == Some(AncMode::Ambient));
-
-        // Level: checks the active one (1..=7).
-        let lvl = s.anc.map(|(_, l)| l);
-        for (i, it) in r_levels.iter().enumerate() {
-            it.set_checked(lvl == Some((i + 1) as u16));
-        }
-
-        // Spatial sound: checks the active one (Off when !on; otherwise Movie/Music/Game according to type 0/1/2).
-        if let Some((on, kind)) = s.spatial_full {
-            r_sp_off.set_checked(!on);
-            r_sp_movie.set_checked(on && kind == 0);
-            r_sp_music.set_checked(on && kind == 1);
-            r_sp_game.set_checked(on && kind == 2);
-        }
-
-        // State toggles: only updates when GET replied (otherwise keeps the last state).
-        if let Some(v) = s.vp {
-            r_vp.set_checked(v);
-        }
-        if let Some(v) = s.stc {
-            r_stc.set_checked(v);
-        }
-        if let Some(v) = s.limiter {
-            r_lim.set_checked(v);
-        }
-        if let Some(v) = s.chat {
-            r_chat.set_checked(v);
-        }
-        if let Some(v) = s.hi_res {
-            r_hr.set_checked(v);
-        }
-        if let Some(v) = s.safe_sound {
-            r_ss.set_checked(v);
-        }
-        if let Some(v) = s.lr {
-            r_lr.set_checked(v);
-        }
-        if let Some(v) = s.low_eq {
-            r_low_eq.set_checked(v);
-        }
-        if let Some(v) = s.voiceaware {
-            r_va.set_checked(v);
-        }
-
-        // VoiceAware level: checks the active one (1..=5).
-        let va_lvl = s.voiceaware_level;
-        for (i, it) in r_va_levels.iter().enumerate() {
-            it.set_checked(va_lvl == Some((i + 1) as u16));
-        }
-
-        // Auto-off: checks the active preset.
-        for (i, it) in r_autooff.iter().enumerate() {
-            let (_, en, min) = AUTOOFF_OPTS[i];
-            let checked = match s.auto_off {
-                Some((false, _)) => !en,              // "Nunca"
-                Some((true, t)) => en && t == min,    // minutes preset
-                None => false,
-            };
-            it.set_checked(checked);
-        }
+        *status_holder.borrow_mut() = s;
+        ui.render(&status_holder.borrow(), i18n, tray);
     };
 
     // "Find my headphones" ringing: (instant when started, Play/Pause key hook if installed).
@@ -559,7 +793,9 @@ fn main() {
 
     event_loop.run(move |event, _, control_flow| {
         match event {
-            Event::NewEvents(StartCause::Init) => refresh(&tray),
+            Event::NewEvents(StartCause::Init) => {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if let Some((since, hook)) = &ringing {
                     // Ringing: does not perform slow reads (the hook needs a free loop). Only checks
@@ -567,86 +803,91 @@ fn main() {
                     let pressed = hook.as_ref().map_or(false, |h| h.take_pressed());
                     if pressed || since.elapsed() >= RING_MAX {
                         apply_findme(false);
-                        r_find.set_checked(false);
+                        ui.mi_find.set_checked(false);
                         ringing = None; // drop the hook
                     }
                 } else {
-                    refresh(&tray);
+                    refresh(&last_status, &i18n, &ui, &tray, &low_notified);
                 }
             }
             _ => {}
         }
 
         if let Ok(ev) = menu_rx.try_recv() {
-            if ev.id == mi_quit.id() {
+            if ev.id == ui.mi_quit.id() {
                 *control_flow = ControlFlow::Exit;
-            } else if ev.id == mi_shutdown.id() {
+            } else if ev.id == ui.mi_shutdown.id() {
                 apply_sd();
-            } else if ev.id == mi_off.id() {
+            } else if ev.id == ui.mi_off.id() {
                 apply(AncSet::Off);
-                refresh(&tray);
-            } else if ev.id == mi_anc.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_anc.id() {
                 apply(AncSet::Anc);
-                refresh(&tray);
-            } else if ev.id == mi_talk.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_talk.id() {
                 apply(AncSet::TalkThru);
-                refresh(&tray);
-            } else if ev.id == mi_amb.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_amb.id() {
                 apply(AncSet::Ambient);
-                refresh(&tray);
-            } else if let Some(n) = levels.iter().position(|it| it.id() == &ev.id) {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if let Some(n) = ui.levels.iter().position(|it| it.id() == &ev.id) {
                 apply_level((n + 1) as u16);
-                refresh(&tray);
-            } else if let Some(i) = autooff.iter().position(|it| it.id() == &ev.id) {
-                let (_, en, min) = AUTOOFF_OPTS[i];
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if let Some(i) = ui.autooff.iter().position(|it| it.id() == &ev.id) {
+                let (en, min) = AUTOOFF_OPTS[i];
                 apply_autooff(en, min);
-                refresh(&tray);
-            } else if ev.id == mi_vp.id() {
-                apply_vp(mi_vp.is_checked());
-            } else if ev.id == mi_stc.id() {
-                apply_stc(mi_stc.is_checked());
-            } else if ev.id == mi_sp_off.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_vp.id() {
+                apply_vp(ui.mi_vp.is_checked());
+            } else if ev.id == ui.mi_stc.id() {
+                apply_stc(ui.mi_stc.is_checked());
+            } else if ev.id == ui.mi_sp_off.id() {
                 apply_spatial(false, 0);
-                refresh(&tray);
-            } else if ev.id == mi_sp_movie.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_sp_movie.id() {
                 apply_spatial(true, 0);
-                refresh(&tray);
-            } else if ev.id == mi_sp_music.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_sp_music.id() {
                 apply_spatial(true, 1);
-                refresh(&tray);
-            } else if ev.id == mi_sp_game.id() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_sp_game.id() {
                 apply_spatial(true, 2);
-                refresh(&tray);
-            } else if ev.id == mi_lim.id() {
-                apply_limiter(mi_lim.is_checked());
-            } else if ev.id == mi_chat.id() {
-                apply_chat(mi_chat.is_checked());
-            } else if ev.id == mi_hr.id() {
-                apply_hr(mi_hr.is_checked());
-            } else if ev.id == mi_ss.id() {
-                apply_ss(mi_ss.is_checked());
-            } else if ev.id == mi_lr.id() {
-                apply_lr(mi_lr.is_checked());
-            } else if ev.id == mi_low_eq.id() {
-                apply_loweq(mi_low_eq.is_checked());
-            } else if ev.id == mi_pause.id() {
-                apply_autopause(mi_pause.is_checked());
-            } else if ev.id == mi_va.id() {
-                apply_va(mi_va.is_checked());
-            } else if let Some(n) = va_levels.iter().position(|it| it.id() == &ev.id) {
-                for (j, it) in va_levels.iter().enumerate() {
+                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+            } else if ev.id == ui.mi_lim.id() {
+                apply_limiter(ui.mi_lim.is_checked());
+            } else if ev.id == ui.mi_chat.id() {
+                apply_chat(ui.mi_chat.is_checked());
+            } else if ev.id == ui.mi_hr.id() {
+                apply_hr(ui.mi_hr.is_checked());
+            } else if ev.id == ui.mi_ss.id() {
+                apply_ss(ui.mi_ss.is_checked());
+            } else if ev.id == ui.mi_lr.id() {
+                apply_lr(ui.mi_lr.is_checked());
+            } else if ev.id == ui.mi_low_eq.id() {
+                apply_loweq(ui.mi_low_eq.is_checked());
+            } else if ev.id == ui.mi_pause.id() {
+                apply_autopause(ui.mi_pause.is_checked());
+            } else if ev.id == ui.mi_va.id() {
+                apply_va(ui.mi_va.is_checked());
+            } else if let Some(n) = ui.va_levels.iter().position(|it| it.id() == &ev.id) {
+                for (j, it) in ui.va_levels.iter().enumerate() {
                     it.set_checked(j == n);
                 }
                 apply_va_level((n + 1) as u16);
-            } else if ev.id == mi_find.id() {
-                if mi_find.is_checked() {
-                    // Started ringing: installs the Play/Pause hook (None = without button shortcut).
+            } else if ev.id == ui.mi_find.id() {
+                if ui.mi_find.is_checked() {
                     apply_findme(true);
                     ringing = Some((Instant::now(), PlayStopHook::install()));
                 } else {
                     apply_findme(false);
-                    ringing = None; // drop the hook
+                    ringing = None;
                 }
+            } else if let Some((code, _)) = ui.lang_items.iter().find(|(_, it)| it.id() == &ev.id) {
+                let code = code.clone();
+                i18n = I18n::new(&code);
+                save_lang(&code);
+                ui.relabel(&i18n);
+                ui.render(&last_status.borrow(), &i18n, &tray);
             }
         }
 

@@ -38,7 +38,11 @@ música também não é suportado (os coeficientes vêm de uma biblioteca nativa
 [docs/pt-BR/EQ-NOTES.md](docs/pt-BR/EQ-NOTES.md). **Use por sua conta e risco**: escrever configurações em um
 dispositivo pode mudar o comportamento dele.
 
+## Idiomas
+O app de bandeja está disponível em inglês e português do Brasil, acompanhando o idioma de exibição do Windows. Você pode alternar o idioma a qualquer momento pelo menu. Para adicionar um novo idioma ou personalizar um existente, veja [docs/pt-BR/TRANSLATING.md](docs/pt-BR/TRANSLATING.md).
+
 ## Documentação
+- [docs/pt-BR/TRANSLATING.md](docs/pt-BR/TRANSLATING.md): como adicionar ou personalizar traduções.
 - [docs/pt-BR/FUNCTIONS.md](docs/pt-BR/FUNCTIONS.md): comandos mapeados e verificados (id, payload, classificação).
 - [docs/pt-BR/FUNCTIONS_full.md](docs/pt-BR/FUNCTIONS_full.md): índice dos 94 métodos do app (**não verificado**).
 - [docs/pt-BR/EQ-NOTES.md](docs/pt-BR/EQ-NOTES.md): por que o EQ de música não é suportado.

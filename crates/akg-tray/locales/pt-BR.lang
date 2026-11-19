@@ -1,0 +1,64 @@
+# Brazilian Portuguese
+lang.name = Português (Brasil)
+
+# Status
+status.battery = Bateria: {value}
+status.firmware = Firmware: {value}
+status.disconnected = desconectado
+status.na = —
+
+# ANC labels (tooltip / status)
+anc.off = desligado
+anc.anc = ANC {level}
+anc.talkthru = TalkThru
+anc.ambient = Ambiente {level}
+anc.other = modo {mode} ({level})
+
+# Auto power-off options
+autooff.never = Nunca
+autooff.minutes = {n} min
+
+# Low battery toast notification
+toast.title = AKG N9 — bateria baixa
+toast.body = Bateria em {percent}%. Hora de carregar o fone.
+
+# Tray tooltip
+tooltip.starting = AKG N9 · iniciando…
+tooltip.disconnected = AKG N9 · desconectado
+tooltip.status = AKG N9 · {battery} · {anc}
+
+# Diagnostics submenu
+diag.serial = Série: {value}
+diag.chip = Chip: {value}
+diag.firmware = Firmware: {value}
+
+# Menu items and submenus
+menu.anc_off = ANC desligado
+menu.anc_on = ANC ligado
+menu.talkthru = TalkThru
+menu.ambient = Ambiente
+menu.level = Nível
+menu.level_n = Nível {n}
+menu.voice_prompts = Avisos de voz
+menu.speak_to_chat = Speak-to-Chat
+menu.autooff = Auto-desligar
+menu.find_headphones = Achar fone (tocar som)
+menu.features = Recursos
+menu.limiter = Limitador
+menu.chat_optimizer = Chat Optimizer
+menu.hi_res = Hi-Res
+menu.safe_sound = Safe Sound
+menu.lr_balance = Balanço L/R (centralizar)
+menu.low_volume_eq = EQ volume baixo
+menu.pause_on_remove = Pausar ao tirar o fone
+menu.voiceaware = VoiceAware
+menu.voiceaware_level = VoiceAware nível
+menu.spatial_sound = Som espacial
+menu.spatial_off = Desligado
+menu.spatial_movie = Filme
+menu.spatial_music = Música
+menu.spatial_game = Jogo
+menu.diag = Diagnóstico
+menu.language = Idioma
+menu.power_off = Desligar o fone
+menu.quit = Sair

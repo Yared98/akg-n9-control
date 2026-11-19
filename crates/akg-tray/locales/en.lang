@@ -1,0 +1,64 @@
+# English (default / fallback). Every key used by the app must exist here.
+lang.name = English
+
+# Status
+status.battery = Battery: {value}
+status.firmware = Firmware: {value}
+status.disconnected = disconnected
+status.na = —
+
+# ANC labels (tooltip / status)
+anc.off = off
+anc.anc = ANC {level}
+anc.talkthru = TalkThru
+anc.ambient = Ambient {level}
+anc.other = mode {mode} ({level})
+
+# Auto power-off options
+autooff.never = Never
+autooff.minutes = {n} min
+
+# Low battery toast notification
+toast.title = AKG N9 — low battery
+toast.body = Battery at {percent}%. Time to charge the headset.
+
+# Tray tooltip
+tooltip.starting = AKG N9 · starting…
+tooltip.disconnected = AKG N9 · disconnected
+tooltip.status = AKG N9 · {battery} · {anc}
+
+# Diagnostics submenu
+diag.serial = Serial: {value}
+diag.chip = Chip: {value}
+diag.firmware = Firmware: {value}
+
+# Menu items and submenus
+menu.anc_off = ANC off
+menu.anc_on = ANC on
+menu.talkthru = TalkThru
+menu.ambient = Ambient
+menu.level = Level
+menu.level_n = Level {n}
+menu.voice_prompts = Voice prompts
+menu.speak_to_chat = Speak-to-Chat
+menu.autooff = Auto power-off
+menu.find_headphones = Find my headphones (play sound)
+menu.features = Features
+menu.limiter = Limiter
+menu.chat_optimizer = Chat Optimizer
+menu.hi_res = Hi-Res
+menu.safe_sound = Safe Sound
+menu.lr_balance = L/R balance (center)
+menu.low_volume_eq = Low-volume EQ
+menu.pause_on_remove = Pause on removal
+menu.voiceaware = VoiceAware
+menu.voiceaware_level = VoiceAware level
+menu.spatial_sound = Spatial sound
+menu.spatial_off = Off
+menu.spatial_movie = Movie
+menu.spatial_music = Music
+menu.spatial_game = Game
+menu.diag = Diagnostics
+menu.language = Language
+menu.power_off = Power off headset
+menu.quit = Quit
