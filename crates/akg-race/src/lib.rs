@@ -467,6 +467,12 @@ pub fn req_lr_balance_status() -> [u8; REPORT_SIZE] {
 pub fn parse_lr_balance_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::LR_BALANCE_GET)
 }
+/// L/R balance GET body: `[status, onOff, level]` -> (on, raw level byte). Meaning of the level
+/// (sign/side) is decided by the caller; a headset with balance off returns level 0.
+pub fn parse_lr_balance_full(report: &[u8]) -> Option<(bool, u8)> {
+    let b = find_reply(report, id::LR_BALANCE_GET)?;
+    Some((*b.get(1)? != 0, *b.get(2)?))
+}
 
 /// Auto power-off GET (0x2C83, module 0x0001): request `01 00`. Body:
 /// `[<status> 01 00 <enabled> <?> <timeout_lo> <timeout_hi>]` → (enabled, timeout_min).
@@ -900,6 +906,15 @@ mod tests {
             &tx.sent.borrow()[0][3..15],
             &[0x05, 0x5A, 0x08, 0x00, 0x82, 0x2C, 0x01, 0x00, 0x01, 0x00, 0x58, 0x02]
         );
+    }
+
+    #[test]
+    fn parse_lr_balance_full_reads_on_and_level() {
+        // Real capture: 05 5B 05 00 37 00 | status 00, on 00, level 00
+        let mut rep = [0u8; REPORT_SIZE];
+        let b = [0x07u8, 0x00, 0x80, 0x05, 0x5B, 0x05, 0x00, 0x37, 0x00, 0x00, 0x01, 0xFD];
+        rep[..b.len()].copy_from_slice(&b);
+        assert_eq!(parse_lr_balance_full(&rep), Some((true, 0xFD)));
     }
 
     #[test]
