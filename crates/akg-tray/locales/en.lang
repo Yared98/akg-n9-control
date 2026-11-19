@@ -57,15 +57,16 @@ menu.limiter = Limiter
 menu.chat_optimizer = Chat Optimizer
 menu.hi_res = Hi-Res
 menu.safe_sound = Safe Sound
-menu.lr_balance = Balance L/R
-menu.lr_off = Off
-menu.lr_left_3 = Left 3
-menu.lr_left_2 = Left 2
-menu.lr_left_1 = Left 1
-menu.lr_center = Center
-menu.lr_right_1 = Right 1
-menu.lr_right_2 = Right 2
-menu.lr_right_3 = Right 3
+menu.lr_balance = L/R balance…
+
+# Balance window
+balance.title = L/R balance
+balance.left = L
+balance.right = R
+balance.center = Center
+balance.value_left = L {n}
+balance.value_right = R {n}
+balance.center_button = Center
 menu.low_volume_eq = Low-volume EQ
 menu.pause_on_remove = Pause on removal
 menu.voiceaware = VoiceAware

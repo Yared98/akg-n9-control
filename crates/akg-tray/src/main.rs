@@ -9,6 +9,7 @@
 #![windows_subsystem = "windows"]
 
 mod autostart;
+mod balance;
 mod i18n;
 mod media;
 mod mediakey;
@@ -50,31 +51,6 @@ const LINK_POLL: Duration = Duration::from_secs(10);
 const RING_POLL: Duration = Duration::from_millis(100);
 const RING_MAX: Duration = Duration::from_secs(120);
 
-/// Converts a step in -3..=3 (negative = left) to the wire representation (on, level).
-/// Step outside -3..=3 maps to Off (false, 0).
-pub fn lr_step_to_wire(step: i8) -> (bool, u8) {
-    match step {
-        -3..=-1 => (true, (256 + step as i16) as u8),
-        0 => (true, 0),
-        1..=3 => (true, step as u8),
-        _ => (false, 0),
-    }
-}
-
-/// Converts the wire representation (on, level) to a step in -3..=3.
-/// Returns None if balance is off or the level is unknown.
-pub fn lr_wire_to_step(on: bool, level: u8) -> Option<i8> {
-    if !on {
-        return None;
-    }
-    match level {
-        0 => Some(0),
-        1..=3 => Some(level as i8),
-        253..=255 => Some((level as i16 - 256) as i8),
-        _ => None,
-    }
-}
-
 /// State read from the headset in a cycle.
 #[derive(Default, Clone)]
 struct Status {
@@ -92,8 +68,7 @@ struct Status {
     auto_off: Option<(bool, u16)>,
     hi_res: Option<bool>,
     safe_sound: Option<bool>,
-    lr: Option<bool>,
-    lr_level: Option<u8>,
+    lr_level: Option<i8>,
     low_eq: Option<bool>,
     voiceaware: Option<bool>,
     voiceaware_level: Option<u16>,
@@ -163,9 +138,7 @@ fn read_status() -> Status {
     s.hi_res = query(&dev, &req_hi_res_status(), parse_hi_res_status);
     s.safe_sound = query(&dev, &req_safe_sound_status(), parse_safe_sound_status);
 
-    let lr_full = query(&dev, &req_lr_balance_status(), parse_lr_balance_full);
-    s.lr = lr_full.map(|(on, _)| on);
-    s.lr_level = lr_full.map(|(_, lvl)| lvl);
+    s.lr_level = query(&dev, &req_lr_balance_status(), parse_lr_balance_full);
 
     s.low_eq = query(&dev, &req_low_vol_eq_status(), parse_low_vol_eq_status);
     s.voiceaware = query(&dev, &req_voiceaware_status(), parse_voiceaware_status);
@@ -260,9 +233,9 @@ fn apply_ss(on: bool) {
         let _ = apply_safe_sound(&dev, on as u8);
     }
 }
-fn apply_lr(on: bool, level: u8) {
+fn apply_lr(step: i8) {
     if let Ok(dev) = HidRace::open() {
-        let _ = apply_lr_balance(&dev, on, level);
+        let _ = apply_lr_balance(&dev, step);
     }
 }
 fn apply_loweq(on: bool) {
@@ -384,16 +357,6 @@ fn make_icon(rgb: [u8; 3]) -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(rgba, N as u32, N as u32).expect("icon")
 }
 
-const LR_STEPS: [(i8, &str); 7] = [
-    (-3, "menu.lr_left_3"),
-    (-2, "menu.lr_left_2"),
-    (-1, "menu.lr_left_1"),
-    (0, "menu.lr_center"),
-    (1, "menu.lr_right_1"),
-    (2, "menu.lr_right_2"),
-    (3, "menu.lr_right_3"),
-];
-
 struct Ui {
     // Status lines (disabled).
     mi_bat: MenuItem,
@@ -428,9 +391,7 @@ struct Ui {
     mi_chat: CheckMenuItem,
     mi_hr: CheckMenuItem,
     mi_ss: CheckMenuItem,
-    submenu_lr: Submenu,
-    mi_lr_off: CheckMenuItem,
-    lr_items: Vec<(i8, CheckMenuItem)>,
+    mi_lr: MenuItem,
     mi_low_eq: CheckMenuItem,
     mi_pause: CheckMenuItem,
     mi_va: CheckMenuItem,
@@ -550,16 +511,7 @@ impl Ui {
         let mi_hr = CheckMenuItem::new(i18n.t("menu.hi_res"), true, false, None);
         let mi_ss = CheckMenuItem::new(i18n.t("menu.safe_sound"), true, false, None);
 
-        // L/R balance submenu with radio items: Off, Left 3..1, Center, Right 1..3.
-        let mi_lr_off = CheckMenuItem::new(i18n.t("menu.lr_off"), true, false, None);
-        let submenu_lr = Submenu::new(i18n.t("menu.lr_balance"), true);
-        submenu_lr.append(&mi_lr_off).expect("append lr off");
-        let mut lr_items = Vec::new();
-        for (step, key) in LR_STEPS {
-            let item = CheckMenuItem::new(i18n.t(key), true, false, None);
-            submenu_lr.append(&item).expect("append lr step");
-            lr_items.push((step, item));
-        }
+        let mi_lr = MenuItem::new(i18n.t("menu.lr_balance"), true, None);
 
         let mi_low_eq = CheckMenuItem::new(i18n.t("menu.low_volume_eq"), true, false, None);
         let mi_pause = CheckMenuItem::new(i18n.t("menu.pause_on_remove"), true, false, None);
@@ -568,7 +520,7 @@ impl Ui {
         // Audio group: sound quality and protection.
         let submenu_recursos = Submenu::new(i18n.t("menu.audio"), true);
         submenu_recursos
-            .append_items(&[&mi_hr, &mi_lim, &mi_ss, &mi_low_eq, &submenu_lr])
+            .append_items(&[&mi_hr, &mi_lim, &mi_ss, &mi_low_eq, &mi_lr])
             .expect("submenu audio");
 
         let va_levels: Vec<CheckMenuItem> = (1..=5)
@@ -741,9 +693,7 @@ impl Ui {
                 mi_chat,
                 mi_hr,
                 mi_ss,
-                submenu_lr,
-                mi_lr_off,
-                lr_items,
+                mi_lr,
                 mi_low_eq,
                 mi_pause,
                 mi_va,
@@ -808,13 +758,7 @@ impl Ui {
         self.mi_hr.set_text(i18n.t("menu.hi_res"));
         self.mi_ss.set_text(i18n.t("menu.safe_sound"));
 
-        self.submenu_lr.set_text(i18n.t("menu.lr_balance"));
-        self.mi_lr_off.set_text(i18n.t("menu.lr_off"));
-        for (step, it) in &self.lr_items {
-            if let Some((_, key)) = LR_STEPS.iter().find(|(s, _)| s == step) {
-                it.set_text(i18n.t(key));
-            }
-        }
+        self.mi_lr.set_text(i18n.t("menu.lr_balance"));
 
         self.mi_low_eq.set_text(i18n.t("menu.low_volume_eq"));
         self.mi_pause.set_text(i18n.t("menu.pause_on_remove"));
@@ -943,29 +887,6 @@ impl Ui {
             self.mi_ss.set_checked(v);
         }
 
-        // L/R balance: checks matching radio item, unknown values check nothing.
-        match (s.lr, s.lr_level) {
-            (Some(false), _) => {
-                self.mi_lr_off.set_checked(true);
-                for (_, it) in &self.lr_items {
-                    it.set_checked(false);
-                }
-            }
-            (Some(true), Some(lvl)) => {
-                self.mi_lr_off.set_checked(false);
-                let active_step = lr_wire_to_step(true, lvl);
-                for (step, it) in &self.lr_items {
-                    it.set_checked(active_step == Some(*step));
-                }
-            }
-            _ => {
-                self.mi_lr_off.set_checked(false);
-                for (_, it) in &self.lr_items {
-                    it.set_checked(false);
-                }
-            }
-        }
-
         if let Some(v) = s.low_eq {
             self.mi_low_eq.set_checked(v);
         }
@@ -1026,6 +947,9 @@ fn main() {
     let hk_n = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
     let hk_t = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyT);
     let hk_f = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyF);
+    let hk_left = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::ArrowLeft);
+    let hk_right = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::ArrowRight);
+    let hk_down = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::ArrowDown);
     let hotkey_rx = GlobalHotKeyEvent::receiver();
 
     if settings::get_bool("hotkeys", false) {
@@ -1033,6 +957,9 @@ fn main() {
             let _ = mgr.register(hk_n);
             let _ = mgr.register(hk_t);
             let _ = mgr.register(hk_f);
+            let _ = mgr.register(hk_left);
+            let _ = mgr.register(hk_right);
+            let _ = mgr.register(hk_down);
         }
     }
 
@@ -1186,6 +1113,23 @@ fn main() {
                         apply_findme(true);
                         ringing = Some((Instant::now(), PlayStopHook::install()));
                     }
+                } else if ev.id == hk_left.id {
+                    let cur = last_status.borrow().lr_level.unwrap_or(0);
+                    let step = (cur - 2).clamp(-16, 16);
+                    apply_lr(step);
+                    last_status.borrow_mut().lr_level = Some(step);
+                    balance::set_step(step);
+                } else if ev.id == hk_right.id {
+                    let cur = last_status.borrow().lr_level.unwrap_or(0);
+                    let step = (cur + 2).clamp(-16, 16);
+                    apply_lr(step);
+                    last_status.borrow_mut().lr_level = Some(step);
+                    balance::set_step(step);
+                } else if ev.id == hk_down.id {
+                    let step = 0;
+                    apply_lr(step);
+                    last_status.borrow_mut().lr_level = Some(step);
+                    balance::set_step(step);
                 }
             }
         }
@@ -1308,27 +1252,18 @@ fn main() {
                 apply_hr(ui.mi_hr.is_checked());
             } else if ev.id == ui.mi_ss.id() {
                 apply_ss(ui.mi_ss.is_checked());
-            } else if ev.id == ui.mi_lr_off.id() {
-                apply_lr(false, 0);
-                refresh(
-                    &last_status,
-                    &i18n,
-                    &ui,
-                    &tray,
-                    &low_notified,
-                    &last_linked,
-                );
-            } else if let Some(&(step, _)) = ui.lr_items.iter().find(|(_, it)| it.id() == &ev.id) {
-                let (on, wire) = lr_step_to_wire(step);
-                apply_lr(on, wire);
-                refresh(
-                    &last_status,
-                    &i18n,
-                    &ui,
-                    &tray,
-                    &low_notified,
-                    &last_linked,
-                );
+            } else if ev.id == ui.mi_lr.id() {
+                let texts = balance::BalanceTexts {
+                    title: i18n.t("balance.title"),
+                    left: i18n.t("balance.left"),
+                    right: i18n.t("balance.right"),
+                    center: i18n.t("balance.center"),
+                    value_left: i18n.t("balance.value_left"),
+                    value_right: i18n.t("balance.value_right"),
+                    center_button: i18n.t("balance.center_button"),
+                };
+                let initial_step = last_status.borrow().lr_level.unwrap_or(0);
+                balance::open(texts, initial_step, apply_lr);
             } else if ev.id == ui.mi_low_eq.id() {
                 apply_loweq(ui.mi_low_eq.is_checked());
             } else if ev.id == ui.mi_pause.id() {
@@ -1369,10 +1304,16 @@ fn main() {
                         let _ = mgr.register(hk_n);
                         let _ = mgr.register(hk_t);
                         let _ = mgr.register(hk_f);
+                        let _ = mgr.register(hk_left);
+                        let _ = mgr.register(hk_right);
+                        let _ = mgr.register(hk_down);
                     } else {
                         let _ = mgr.unregister(hk_n);
                         let _ = mgr.unregister(hk_t);
                         let _ = mgr.unregister(hk_f);
+                        let _ = mgr.unregister(hk_left);
+                        let _ = mgr.unregister(hk_right);
+                        let _ = mgr.unregister(hk_down);
                     }
                 }
             } else if let Some((code, _)) = ui.lang_items.iter().find(|(_, it)| it.id() == &ev.id) {
@@ -1394,39 +1335,4 @@ fn main() {
             *control_flow = ControlFlow::WaitUntil(Instant::now() + wait);
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_lr_step_to_wire_and_wire_to_step() {
-        // Center: step 0 -> (true, 0)
-        assert_eq!(lr_step_to_wire(0), (true, 0));
-        assert_eq!(lr_wire_to_step(true, 0), Some(0));
-
-        // Right side: step s > 0 -> (true, s as u8)
-        assert_eq!(lr_step_to_wire(1), (true, 1));
-        assert_eq!(lr_wire_to_step(true, 1), Some(1));
-        assert_eq!(lr_step_to_wire(2), (true, 2));
-        assert_eq!(lr_wire_to_step(true, 2), Some(2));
-        assert_eq!(lr_step_to_wire(3), (true, 3));
-        assert_eq!(lr_wire_to_step(true, 3), Some(3));
-
-        // Left side: step s < 0 -> (true, (256 + s) as u8)
-        assert_eq!(lr_step_to_wire(-1), (true, 255));
-        assert_eq!(lr_wire_to_step(true, 255), Some(-1));
-        assert_eq!(lr_step_to_wire(-2), (true, 254));
-        assert_eq!(lr_wire_to_step(true, 254), Some(-2));
-        assert_eq!(lr_step_to_wire(-3), (true, 253));
-        assert_eq!(lr_wire_to_step(true, 253), Some(-3));
-
-        // Off and invalid/unknown values
-        assert_eq!(lr_step_to_wire(-4), (false, 0));
-        assert_eq!(lr_wire_to_step(false, 0), None);
-        assert_eq!(lr_wire_to_step(false, 1), None);
-        assert_eq!(lr_wire_to_step(true, 4), None);
-        assert_eq!(lr_wire_to_step(true, 252), None);
-    }
 }

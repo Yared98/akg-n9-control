@@ -20,7 +20,7 @@ USB-C port (`0ECB:20D8`). No vendor software needed.
   Spatial sound (Movie/Music/Game), voice prompts, Speak-to-Chat, VoiceAware (and level), pause on
   removal, auto power-off, limiter, Chat Optimizer, Hi-Res, Safe Sound, low-volume EQ, L/R balance,
   find my headphones (plays a sound; **stops when you press play on the headset**) and power off.
-- **Global shortcuts**: `Ctrl+Alt+N` cycles ANC modes, `Ctrl+Alt+T` toggles TalkThru, and `Ctrl+Alt+F` rings find my headphones.
+- **Global shortcuts**: `Ctrl+Alt+N` cycles ANC modes, `Ctrl+Alt+T` toggles TalkThru, `Ctrl+Alt+F` rings find my headphones, and `Ctrl+Alt+Left` / `Ctrl+Alt+Right` / `Ctrl+Alt+Down` adjust L/R balance.
 - **Diagnostics**: serial, chip and firmware (read-only).
 
 ## App menu

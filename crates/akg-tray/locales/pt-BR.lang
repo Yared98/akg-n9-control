@@ -57,15 +57,16 @@ menu.limiter = Limitador
 menu.chat_optimizer = Chat Optimizer
 menu.hi_res = Hi-Res
 menu.safe_sound = Safe Sound
-menu.lr_balance = Balanço L/R
-menu.lr_off = Desligado
-menu.lr_left_3 = Esquerda 3
-menu.lr_left_2 = Esquerda 2
-menu.lr_left_1 = Esquerda 1
-menu.lr_center = Centro
-menu.lr_right_1 = Direita 1
-menu.lr_right_2 = Direita 2
-menu.lr_right_3 = Direita 3
+menu.lr_balance = Balanço L/R…
+
+# Janela de balanço
+balance.title = Balanço L/R
+balance.left = L
+balance.right = R
+balance.center = Centro
+balance.value_left = L {n}
+balance.value_right = R {n}
+balance.center_button = Centralizar
 menu.low_volume_eq = EQ volume baixo
 menu.pause_on_remove = Pausar ao tirar o fone
 menu.voiceaware = VoiceAware
