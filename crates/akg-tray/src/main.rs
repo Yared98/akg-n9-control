@@ -925,7 +925,25 @@ impl Ui {
     }
 }
 
+/// The app has no console (windows subsystem), so a panic would vanish silently. Append it to
+/// `%APPDATA%\akg-n9-control\crash.log` instead, to make bug reports possible.
+fn install_panic_log() {
+    std::panic::set_hook(Box::new(|info| {
+        if let Some(dir) = std::env::var_os("APPDATA") {
+            let dir = std::path::PathBuf::from(dir).join("akg-n9-control");
+            let _ = std::fs::create_dir_all(&dir);
+            let bt = std::backtrace::Backtrace::force_capture();
+            let line = format!("{info}\n{bt}\n---\n");
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
+                use std::io::Write;
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
+    }));
+}
+
 fn main() {
+    install_panic_log();
     let mut i18n = I18n::startup();
     let langs = available();
 

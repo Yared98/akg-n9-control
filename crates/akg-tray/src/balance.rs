@@ -1,7 +1,7 @@
 //! Native Win32 L/R balance slider window.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 
 use windows::core::{w, PCWSTR};
@@ -40,6 +40,13 @@ const IDC_STATIC_VALUE: usize = 104;
 const IDC_CENTER_BTN: usize = 105;
 
 static CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+// Subclass bookkeeping lives outside `STATE`: the subclass procs run while `STATE` is mutably
+// borrowed (e.g. `set_step` sends TBM_SETPOS), and borrowing again there would panic across FFI.
+static TRACKBAR_RAW: AtomicIsize = AtomicIsize::new(0);
+static BUTTON_RAW: AtomicIsize = AtomicIsize::new(0);
+static ORIG_TRACKBAR_PROC: AtomicIsize = AtomicIsize::new(0);
+static ORIG_BUTTON_PROC: AtomicIsize = AtomicIsize::new(0);
 
 /// Localised strings required to render the slider window.
 #[derive(Clone, Debug)]
@@ -378,6 +385,10 @@ unsafe fn create_window(texts: BalanceTexts, initial_step: i8, on_change: fn(i8)
     // Subclass trackbar and button to intercept Escape key
     let orig_trackbar = SetWindowLongPtrW(trackbar, GWLP_WNDPROC, child_subclass_proc as *const () as isize);
     let orig_button = SetWindowLongPtrW(center_btn, GWLP_WNDPROC, child_subclass_proc as *const () as isize);
+    ORIG_TRACKBAR_PROC.store(orig_trackbar, Ordering::SeqCst);
+    ORIG_BUTTON_PROC.store(orig_button, Ordering::SeqCst);
+    TRACKBAR_RAW.store(trackbar.0 as isize, Ordering::SeqCst);
+    BUTTON_RAW.store(center_btn.0 as isize, Ordering::SeqCst);
 
     STATE.with(|s| {
         let mut b = s.borrow_mut();
@@ -393,6 +404,9 @@ unsafe fn create_window(texts: BalanceTexts, initial_step: i8, on_change: fn(i8)
         b.orig_button_proc = Some(orig_button);
     });
 
+    // The first ShowWindow call of a process can be swallowed by the STARTUPINFO show flag (for
+    // example when the app was started hidden or minimised), so call it twice.
+    let _ = ShowWindow(hwnd, SW_SHOW);
     let _ = ShowWindow(hwnd, SW_SHOW);
     let _ = BringWindowToTop(hwnd);
     let _ = SetForegroundWindow(hwnd);
@@ -419,16 +433,15 @@ unsafe extern "system" fn child_subclass_proc(
         return res;
     }
 
-    let orig = STATE.with(|s| {
-        let b = s.borrow();
-        if b.trackbar_hwnd == Some(hwnd) {
-            b.orig_trackbar_proc
-        } else if b.button_hwnd == Some(hwnd) {
-            b.orig_button_proc
-        } else {
-            None
-        }
-    });
+    let raw = hwnd.0 as isize;
+    let orig = if raw == TRACKBAR_RAW.load(Ordering::SeqCst) {
+        Some(ORIG_TRACKBAR_PROC.load(Ordering::SeqCst))
+    } else if raw == BUTTON_RAW.load(Ordering::SeqCst) {
+        Some(ORIG_BUTTON_PROC.load(Ordering::SeqCst))
+    } else {
+        None
+    }
+    .filter(|p| *p != 0);
 
     if let Some(orig_proc) = orig {
         let prev_wndproc: WNDPROC = std::mem::transmute(orig_proc);
