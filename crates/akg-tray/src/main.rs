@@ -5,15 +5,20 @@
 //! levels, and auto-off presets are "radio" checkboxes marking the active item. Writes pass through
 //! the strict whitelist in the `akg-race` crate; flash/FOTA/reset/NVKey are never exposed.
 //!
-//! Reading runs on the event loop thread (blocks ~0.5 s every 30 s), via `ControlFlow::WaitUntil`.
+//! Reading runs on the event loop thread, with short link checks between full polls.
 #![windows_subsystem = "windows"]
 
+mod autostart;
 mod i18n;
+mod media;
 mod mediakey;
+mod settings;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use i18n::{available, save_lang, I18n, LangInfo};
 use mediakey::PlayStopHook;
 
@@ -24,7 +29,7 @@ use akg_race::{
     apply_voice_prompt, apply_voiceaware, apply_voiceaware_level, hid::HidRace, parse_anc,
     parse_audio_limiter_status, parse_auto_power_off_status, parse_battery,
     parse_chat_optimizer_status, parse_fw_version, parse_hi_res_status, parse_low_vol_eq_status,
-    parse_lr_balance_status, parse_nvkey, parse_safe_sound_status, parse_spatial_3d_full,
+    parse_lr_balance_full, parse_nvkey, parse_safe_sound_status, parse_spatial_3d_full,
     parse_speak_to_chat_status, parse_voiceaware_level, parse_voiceaware_status, parse_vp_status,
     req_anc_status, req_audio_limiter_status, req_auto_power_off_status, req_battery,
     req_chat_optimizer_status, req_fw_version, req_hi_res_status, req_low_vol_eq_status,
@@ -39,10 +44,36 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const POLL: Duration = Duration::from_secs(30);
+const LINK_POLL: Duration = Duration::from_secs(10);
 /// While "find my headphones" is ringing: short interval to detect Play, and safety limit that
 /// stops the sound and releases the key hook if no one stops it (avoids swallowing Play/Pause forever).
 const RING_POLL: Duration = Duration::from_millis(100);
 const RING_MAX: Duration = Duration::from_secs(120);
+
+/// Converts a step in -3..=3 (negative = left) to the wire representation (on, level).
+/// Step outside -3..=3 maps to Off (false, 0).
+pub fn lr_step_to_wire(step: i8) -> (bool, u8) {
+    match step {
+        -3..=-1 => (true, (256 + step as i16) as u8),
+        0 => (true, 0),
+        1..=3 => (true, step as u8),
+        _ => (false, 0),
+    }
+}
+
+/// Converts the wire representation (on, level) to a step in -3..=3.
+/// Returns None if balance is off or the level is unknown.
+pub fn lr_wire_to_step(on: bool, level: u8) -> Option<i8> {
+    if !on {
+        return None;
+    }
+    match level {
+        0 => Some(0),
+        1..=3 => Some(level as i8),
+        253..=255 => Some((level as i16 - 256) as i8),
+        _ => None,
+    }
+}
 
 /// State read from the headset in a cycle.
 #[derive(Default, Clone)]
@@ -50,6 +81,8 @@ struct Status {
     connected: bool,
     battery: Option<u8>,
     fw: Option<String>,
+    dongle_fw: Option<String>,
+    name: Option<String>,
     anc: Option<(AncMode, u16)>,
     vp: Option<bool>,
     stc: Option<bool>,
@@ -60,6 +93,7 @@ struct Status {
     hi_res: Option<bool>,
     safe_sound: Option<bool>,
     lr: Option<bool>,
+    lr_level: Option<u8>,
     low_eq: Option<bool>,
     voiceaware: Option<bool>,
     voiceaware_level: Option<u16>,
@@ -117,6 +151,7 @@ fn read_status() -> Status {
     };
     s.connected = true;
     s.fw = query(&dev, &req_fw_version(Role::Headset), parse_fw_version);
+    s.dongle_fw = query(&dev, &req_fw_version(Role::Dongle), parse_fw_version);
     s.battery = query(&dev, &req_battery(), parse_battery);
     s.anc = query(&dev, &req_anc_status(), parse_anc);
     s.vp = query(&dev, &req_vp_status(), parse_vp_status);
@@ -127,14 +162,32 @@ fn read_status() -> Status {
     s.auto_off = query(&dev, &req_auto_power_off_status(), parse_auto_power_off_status);
     s.hi_res = query(&dev, &req_hi_res_status(), parse_hi_res_status);
     s.safe_sound = query(&dev, &req_safe_sound_status(), parse_safe_sound_status);
-    s.lr = query(&dev, &req_lr_balance_status(), parse_lr_balance_status);
+
+    let lr_full = query(&dev, &req_lr_balance_status(), parse_lr_balance_full);
+    s.lr = lr_full.map(|(on, _)| on);
+    s.lr_level = lr_full.map(|(_, lvl)| lvl);
+
     s.low_eq = query(&dev, &req_low_vol_eq_status(), parse_low_vol_eq_status);
     s.voiceaware = query(&dev, &req_voiceaware_status(), parse_voiceaware_status);
     s.voiceaware_level = query(&dev, &req_voiceaware_level(), parse_voiceaware_level);
+
+    // Name (custom 0xF203 preferred, otherwise default 0xF202).
+    let custom_name = query(&dev, &req_nvkey_read(0xF203, 64), nvkey_string);
+    s.name = custom_name.or_else(|| query(&dev, &req_nvkey_read(0xF202, 64), nvkey_string));
+
     // Static (serial, chip) — NVKey 0xF508 / 0x1002.
     s.serial = query(&dev, &req_nvkey_read(0xF508, 32), nvkey_string);
     s.chip = query(&dev, &req_nvkey_read(0x1002, 32), nvkey_string);
     s
+}
+
+/// Short poll: opens the device, queries battery, and returns true if linked.
+fn read_link() -> bool {
+    let dev = match HidRace::open() {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    query(&dev, &req_battery(), parse_battery).is_some()
 }
 
 // ---- write helpers (open connection on the fly; connection failure is silent) --------------
@@ -199,9 +252,9 @@ fn apply_ss(on: bool) {
         let _ = apply_safe_sound(&dev, on as u8);
     }
 }
-fn apply_lr(on: bool) {
+fn apply_lr(on: bool, level: u8) {
     if let Ok(dev) = HidRace::open() {
-        let _ = apply_lr_balance(&dev, on, 0); // level 0 (centered); fine tuning to be validated
+        let _ = apply_lr_balance(&dev, on, level);
     }
 }
 fn apply_loweq(on: bool) {
@@ -242,12 +295,19 @@ fn tooltip(i18n: &I18n, s: &Status) -> String {
     if !s.connected {
         return i18n.t("tooltip.disconnected");
     }
+    let prefix = match &s.name {
+        Some(n) if n.chars().count() <= 24 => n.as_str(),
+        _ => "AKG N9",
+    };
     let bat = s.battery.map(|b| format!("{b}%")).unwrap_or_else(|| "?".into());
     let anc = s
         .anc
         .map(|(m, l)| anc_label(i18n, m, l))
         .unwrap_or_else(|| "?".into());
-    i18n.tf("tooltip.status", &[("battery", &bat), ("anc", &anc)])
+    i18n.tf(
+        "tooltip.status",
+        &[("name", prefix), ("battery", &bat), ("anc", &anc)],
+    )
 }
 
 /// Icon color based on battery: teal (ok), amber (medium), red (low), gray (no reading).
@@ -267,6 +327,24 @@ fn notify_low_battery(i18n: &I18n, pct: u8) {
         .title(&i18n.t("toast.title"))
         .text1(&i18n.tf("toast.body", &[("percent", &pct.to_string())]))
         .show();
+}
+
+/// Native Windows toast notification for connection state transitions.
+fn notify_connection(i18n: &I18n, linked: bool, battery: Option<u8>) {
+    if linked {
+        let pct = battery
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| i18n.t("status.na"));
+        let _ = Toast::new(Toast::POWERSHELL_APP_ID)
+            .title(&i18n.t("toast.connected_title"))
+            .text1(&i18n.tf("toast.connected_body", &[("percent", &pct)]))
+            .show();
+    } else {
+        let _ = Toast::new(Toast::POWERSHELL_APP_ID)
+            .title(&i18n.t("toast.disconnected_title"))
+            .text1(&i18n.t("toast.disconnected_body"))
+            .show();
+    }
 }
 
 fn make_icon(rgb: [u8; 3]) -> tray_icon::Icon {
@@ -298,10 +376,22 @@ fn make_icon(rgb: [u8; 3]) -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(rgba, N as u32, N as u32).expect("icon")
 }
 
+const LR_STEPS: [(i8, &str); 7] = [
+    (-3, "menu.lr_left_3"),
+    (-2, "menu.lr_left_2"),
+    (-1, "menu.lr_left_1"),
+    (0, "menu.lr_center"),
+    (1, "menu.lr_right_1"),
+    (2, "menu.lr_right_2"),
+    (3, "menu.lr_right_3"),
+];
+
 struct Ui {
     // Status lines (disabled).
     mi_bat: MenuItem,
     mi_fw: MenuItem,
+    mi_name: MenuItem,
+    mi_dongle_fw: MenuItem,
 
     // Listening modes — "radio" checkboxes: the active one is checked.
     mi_off: CheckMenuItem,
@@ -330,7 +420,9 @@ struct Ui {
     mi_chat: CheckMenuItem,
     mi_hr: CheckMenuItem,
     mi_ss: CheckMenuItem,
-    mi_lr: CheckMenuItem,
+    submenu_lr: Submenu,
+    mi_lr_off: CheckMenuItem,
+    lr_items: Vec<(i8, CheckMenuItem)>,
     mi_low_eq: CheckMenuItem,
     mi_pause: CheckMenuItem,
     mi_va: CheckMenuItem,
@@ -356,7 +448,15 @@ struct Ui {
     mi_diag_chip: MenuItem,
     mi_diag_fw: MenuItem,
 
-    // Language selector — radio checkboxes.
+    // App submenu
+    submenu_app: Submenu,
+    mi_autostart: CheckMenuItem,
+    submenu_notif: Submenu,
+    mi_notify_conn: CheckMenuItem,
+    mi_pause_disconnect: CheckMenuItem,
+    mi_hotkeys: CheckMenuItem,
+
+    // Language selector — radio checkboxes (inside App submenu).
     submenu_lang: Submenu,
     lang_items: Vec<(String, CheckMenuItem)>,
 
@@ -379,6 +479,12 @@ impl Ui {
             false,
             None,
         );
+        let mi_name = MenuItem::new(
+            i18n.tf("status.name", &[("value", &i18n.t("status.na"))]),
+            false,
+            None,
+        );
+        let mi_dongle_fw = MenuItem::new("", false, None);
 
         let mi_off = CheckMenuItem::new(i18n.t("menu.anc_off"), true, false, None);
         let mi_anc = CheckMenuItem::new(i18n.t("menu.anc_on"), true, false, None);
@@ -435,14 +541,26 @@ impl Ui {
         let mi_chat = CheckMenuItem::new(i18n.t("menu.chat_optimizer"), true, false, None);
         let mi_hr = CheckMenuItem::new(i18n.t("menu.hi_res"), true, false, None);
         let mi_ss = CheckMenuItem::new(i18n.t("menu.safe_sound"), true, false, None);
-        let mi_lr = CheckMenuItem::new(i18n.t("menu.lr_balance"), true, false, None);
+
+        // L/R balance submenu with radio items: Off, Left 3..1, Center, Right 1..3.
+        let mi_lr_off = CheckMenuItem::new(i18n.t("menu.lr_off"), true, false, None);
+        let submenu_lr = Submenu::new(i18n.t("menu.lr_balance"), true);
+        submenu_lr.append(&mi_lr_off).expect("append lr off");
+        let mut lr_items = Vec::new();
+        for (step, key) in LR_STEPS {
+            let item = CheckMenuItem::new(i18n.t(key), true, false, None);
+            submenu_lr.append(&item).expect("append lr step");
+            lr_items.push((step, item));
+        }
+
         let mi_low_eq = CheckMenuItem::new(i18n.t("menu.low_volume_eq"), true, false, None);
         let mi_pause = CheckMenuItem::new(i18n.t("menu.pause_on_remove"), true, false, None);
         let mi_va = CheckMenuItem::new(i18n.t("menu.voiceaware"), true, false, None);
+
         // Audio group: sound quality and protection.
         let submenu_recursos = Submenu::new(i18n.t("menu.audio"), true);
         submenu_recursos
-            .append_items(&[&mi_hr, &mi_lim, &mi_ss, &mi_low_eq, &mi_lr])
+            .append_items(&[&mi_hr, &mi_lim, &mi_ss, &mi_low_eq, &submenu_lr])
             .expect("submenu audio");
 
         let va_levels: Vec<CheckMenuItem> = (1..=5)
@@ -494,6 +612,7 @@ impl Ui {
             .append_items(&[&mi_diag_serial, &mi_diag_chip, &mi_diag_fw])
             .expect("submenu diag");
 
+        // Language submenu inside App submenu
         let submenu_lang = Submenu::new(i18n.t("menu.language"), true);
         let mut lang_items = Vec::new();
         for lang in langs {
@@ -502,6 +621,47 @@ impl Ui {
             submenu_lang.append(&item).expect("append lang item");
             lang_items.push((lang.code.clone(), item));
         }
+
+        // App submenu items
+        let mi_autostart = CheckMenuItem::new(
+            i18n.t("menu.autostart"),
+            true,
+            autostart::is_enabled(),
+            None,
+        );
+        let mi_notify_conn = CheckMenuItem::new(
+            i18n.t("menu.notify_connection"),
+            true,
+            settings::get_bool("notify_connection", true),
+            None,
+        );
+        let submenu_notif = Submenu::new(i18n.t("menu.notifications"), true);
+        submenu_notif.append(&mi_notify_conn).expect("append notif");
+
+        let mi_pause_disconnect = CheckMenuItem::new(
+            i18n.t("menu.pause_on_disconnect"),
+            true,
+            settings::get_bool("pause_on_disconnect", false),
+            None,
+        );
+        let mi_hotkeys = CheckMenuItem::new(
+            i18n.t("menu.hotkeys"),
+            true,
+            settings::get_bool("hotkeys", false),
+            None,
+        );
+
+        let submenu_app = Submenu::new(i18n.t("menu.app"), true);
+        submenu_app
+            .append_items(&[
+                &mi_autostart,
+                &submenu_notif,
+                &mi_pause_disconnect,
+                &mi_hotkeys,
+                &PredefinedMenuItem::separator(),
+                &submenu_lang,
+            ])
+            .expect("submenu app");
 
         let mi_shutdown = MenuItem::new(i18n.t("menu.power_off"), true, None);
         let mi_quit = MenuItem::new(i18n.t("menu.quit"), true, None);
@@ -529,6 +689,8 @@ impl Ui {
         menu.append_items(&[
             &mi_bat,
             &mi_fw,
+            &mi_name,
+            &mi_dongle_fw,
             &PredefinedMenuItem::separator(),
             &mi_off,
             &mi_anc,
@@ -543,7 +705,7 @@ impl Ui {
             &PredefinedMenuItem::separator(),
             &mi_find,
             &PredefinedMenuItem::separator(),
-            &submenu_lang,
+            &submenu_app,
             &PredefinedMenuItem::separator(),
             &mi_quit,
         ])
@@ -553,6 +715,8 @@ impl Ui {
             Self {
                 mi_bat,
                 mi_fw,
+                mi_name,
+                mi_dongle_fw,
                 mi_off,
                 mi_anc,
                 mi_talk,
@@ -569,7 +733,9 @@ impl Ui {
                 mi_chat,
                 mi_hr,
                 mi_ss,
-                mi_lr,
+                submenu_lr,
+                mi_lr_off,
+                lr_items,
                 mi_low_eq,
                 mi_pause,
                 mi_va,
@@ -586,6 +752,12 @@ impl Ui {
                 mi_diag_serial,
                 mi_diag_chip,
                 mi_diag_fw,
+                submenu_app,
+                mi_autostart,
+                submenu_notif,
+                mi_notify_conn,
+                mi_pause_disconnect,
+                mi_hotkeys,
                 submenu_lang,
                 lang_items,
                 mi_shutdown,
@@ -627,7 +799,15 @@ impl Ui {
         self.mi_chat.set_text(i18n.t("menu.chat_optimizer"));
         self.mi_hr.set_text(i18n.t("menu.hi_res"));
         self.mi_ss.set_text(i18n.t("menu.safe_sound"));
-        self.mi_lr.set_text(i18n.t("menu.lr_balance"));
+
+        self.submenu_lr.set_text(i18n.t("menu.lr_balance"));
+        self.mi_lr_off.set_text(i18n.t("menu.lr_off"));
+        for (step, it) in &self.lr_items {
+            if let Some((_, key)) = LR_STEPS.iter().find(|(s, _)| s == step) {
+                it.set_text(i18n.t(key));
+            }
+        }
+
         self.mi_low_eq.set_text(i18n.t("menu.low_volume_eq"));
         self.mi_pause.set_text(i18n.t("menu.pause_on_remove"));
         self.mi_va.set_text(i18n.t("menu.voiceaware"));
@@ -646,6 +826,14 @@ impl Ui {
         self.mi_sp_game.set_text(i18n.t("menu.spatial_game"));
 
         self.submenu_diag.set_text(i18n.t("menu.diag"));
+
+        self.submenu_app.set_text(i18n.t("menu.app"));
+        self.mi_autostart.set_text(i18n.t("menu.autostart"));
+        self.submenu_notif.set_text(i18n.t("menu.notifications"));
+        self.mi_notify_conn.set_text(i18n.t("menu.notify_connection"));
+        self.mi_pause_disconnect.set_text(i18n.t("menu.pause_on_disconnect"));
+        self.mi_hotkeys.set_text(i18n.t("menu.hotkeys"));
+
         self.submenu_lang.set_text(i18n.t("menu.language"));
 
         self.mi_shutdown.set_text(i18n.t("menu.power_off"));
@@ -679,6 +867,19 @@ impl Ui {
         let fw_val = s.fw.as_deref().unwrap_or(&na);
         self.mi_fw
             .set_text(i18n.tf("status.firmware", &[("value", fw_val)]));
+
+        let name_val = s.name.as_deref().unwrap_or(&na);
+        self.mi_name
+            .set_text(i18n.tf("status.name", &[("value", name_val)]));
+
+        if let Some(dfw) = &s.dongle_fw {
+            self.mi_dongle_fw
+                .set_text(i18n.tf("status.dongle_firmware", &[("value", dfw)]));
+            self.mi_dongle_fw.set_enabled(false);
+        } else {
+            self.mi_dongle_fw.set_text("");
+            self.mi_dongle_fw.set_enabled(false);
+        }
 
         // Diagnostics (static).
         let serial_val = s.serial.as_deref().unwrap_or(&na);
@@ -733,9 +934,30 @@ impl Ui {
         if let Some(v) = s.safe_sound {
             self.mi_ss.set_checked(v);
         }
-        if let Some(v) = s.lr {
-            self.mi_lr.set_checked(v);
+
+        // L/R balance: checks matching radio item, unknown values check nothing.
+        match (s.lr, s.lr_level) {
+            (Some(false), _) => {
+                self.mi_lr_off.set_checked(true);
+                for (_, it) in &self.lr_items {
+                    it.set_checked(false);
+                }
+            }
+            (Some(true), Some(lvl)) => {
+                self.mi_lr_off.set_checked(false);
+                let active_step = lr_wire_to_step(true, lvl);
+                for (step, it) in &self.lr_items {
+                    it.set_checked(active_step == Some(*step));
+                }
+            }
+            _ => {
+                self.mi_lr_off.set_checked(false);
+                for (_, it) in &self.lr_items {
+                    it.set_checked(false);
+                }
+            }
         }
+
         if let Some(v) = s.low_eq {
             self.mi_low_eq.set_checked(v);
         }
@@ -760,6 +982,15 @@ impl Ui {
             it.set_checked(checked);
         }
 
+        // App settings checks
+        self.mi_autostart.set_checked(autostart::is_enabled());
+        self.mi_notify_conn
+            .set_checked(settings::get_bool("notify_connection", true));
+        self.mi_pause_disconnect
+            .set_checked(settings::get_bool("pause_on_disconnect", false));
+        self.mi_hotkeys
+            .set_checked(settings::get_bool("hotkeys", false));
+
         // Language radio check
         self.update_lang_checks(i18n.code());
     }
@@ -782,16 +1013,36 @@ fn main() {
     let menu_rx = MenuEvent::receiver();
     let _tray_rx = TrayIconEvent::receiver();
 
-    // Battery notification hysteresis: alerts ≤15%, rearms ≥25% (avoids repeating every cycle).
-    let low_notified = std::cell::Cell::new(false);
+    // Global hotkey manager and shortcuts.
+    let hotkey_manager = GlobalHotKeyManager::new().ok();
+    let hk_n = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
+    let hk_t = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyT);
+    let hk_f = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyF);
+    let hotkey_rx = GlobalHotKeyEvent::receiver();
+
+    if settings::get_bool("hotkeys", false) {
+        if let Some(mgr) = &hotkey_manager {
+            let _ = mgr.register(hk_n);
+            let _ = mgr.register(hk_t);
+            let _ = mgr.register(hk_f);
+        }
+    }
+
+    // Battery notification hysteresis: alerts <=15%, rearms >=25%.
+    let low_notified = Cell::new(false);
     let last_status = RefCell::new(Status::default());
+    let last_linked = Cell::new(None);
+    let last_full_poll = Cell::new(Instant::now());
 
     let refresh = |status_holder: &RefCell<Status>,
                    i18n: &I18n,
                    ui: &Ui,
                    tray: &TrayIcon,
-                   low_notified: &std::cell::Cell<bool>| {
+                   low_notified: &Cell<bool>,
+                   last_linked: &Cell<Option<bool>>| {
         let s = read_status();
+        let linked = s.connected && s.battery.is_some();
+
         if let Some(b) = s.battery {
             if b <= 15 && !low_notified.get() {
                 notify_low_battery(i18n, b);
@@ -800,6 +1051,20 @@ fn main() {
                 low_notified.set(false);
             }
         }
+
+        // Link transition notifications and pause on disconnect (never on first read).
+        if let Some(was_linked) = last_linked.get() {
+            if linked != was_linked {
+                if settings::get_bool("notify_connection", true) {
+                    notify_connection(i18n, linked, s.battery);
+                }
+                if !linked && settings::get_bool("pause_on_disconnect", false) {
+                    media::pause_current();
+                }
+            }
+        }
+        last_linked.set(Some(linked));
+
         *status_holder.borrow_mut() = s;
         ui.render(&status_holder.borrow(), i18n, tray);
     };
@@ -810,7 +1075,15 @@ fn main() {
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::NewEvents(StartCause::Init) => {
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
+                last_full_poll.set(Instant::now());
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if let Some((since, hook)) = &ringing {
@@ -822,11 +1095,91 @@ fn main() {
                         ui.mi_find.set_checked(false);
                         ringing = None; // drop the hook
                     }
+                } else if last_full_poll.get().elapsed() >= POLL {
+                    refresh(
+                        &last_status,
+                        &i18n,
+                        &ui,
+                        &tray,
+                        &low_notified,
+                        &last_linked,
+                    );
+                    last_full_poll.set(Instant::now());
                 } else {
-                    refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                    // Short poll: battery query only.
+                    let linked = read_link();
+                    if let Some(was_linked) = last_linked.get() {
+                        if linked != was_linked {
+                            refresh(
+                                &last_status,
+                                &i18n,
+                                &ui,
+                                &tray,
+                                &low_notified,
+                                &last_linked,
+                            );
+                            last_full_poll.set(Instant::now());
+                        }
+                    } else {
+                        last_linked.set(Some(linked));
+                    }
                 }
             }
             _ => {}
+        }
+
+        // Global hotkey events
+        if let Ok(ev) = hotkey_rx.try_recv() {
+            if ev.state == HotKeyState::Pressed {
+                if ev.id == hk_n.id {
+                    // Cycle ANC mode: Off -> ANC -> TalkThru -> Ambient -> Off
+                    let cur = last_status.borrow().anc.map(|(m, _)| m);
+                    let next = match cur {
+                        Some(AncMode::Off) => AncSet::Anc,
+                        Some(AncMode::Anc) => AncSet::TalkThru,
+                        Some(AncMode::TalkThru) => AncSet::Ambient,
+                        Some(AncMode::Ambient) => AncSet::Off,
+                        _ => AncSet::Off,
+                    };
+                    apply(next);
+                    refresh(
+                        &last_status,
+                        &i18n,
+                        &ui,
+                        &tray,
+                        &low_notified,
+                        &last_linked,
+                    );
+                } else if ev.id == hk_t.id {
+                    // Toggle TalkThru: if TalkThru -> ANC else TalkThru
+                    let cur = last_status.borrow().anc.map(|(m, _)| m);
+                    let next = if cur == Some(AncMode::TalkThru) {
+                        AncSet::Anc
+                    } else {
+                        AncSet::TalkThru
+                    };
+                    apply(next);
+                    refresh(
+                        &last_status,
+                        &i18n,
+                        &ui,
+                        &tray,
+                        &low_notified,
+                        &last_linked,
+                    );
+                } else if ev.id == hk_f.id {
+                    // Toggle Find headphones
+                    if ringing.is_some() {
+                        apply_findme(false);
+                        ui.mi_find.set_checked(false);
+                        ringing = None;
+                    } else {
+                        ui.mi_find.set_checked(true);
+                        apply_findme(true);
+                        ringing = Some((Instant::now(), PlayStopHook::install()));
+                    }
+                }
+            }
         }
 
         if let Ok(ev) = menu_rx.try_recv() {
@@ -836,39 +1189,109 @@ fn main() {
                 apply_sd();
             } else if ev.id == ui.mi_off.id() {
                 apply(AncSet::Off);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_anc.id() {
                 apply(AncSet::Anc);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_talk.id() {
                 apply(AncSet::TalkThru);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_amb.id() {
                 apply(AncSet::Ambient);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if let Some(n) = ui.levels.iter().position(|it| it.id() == &ev.id) {
                 apply_level((n + 1) as u16);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if let Some(i) = ui.autooff.iter().position(|it| it.id() == &ev.id) {
                 let (en, min) = AUTOOFF_OPTS[i];
                 apply_autooff(en, min);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_vp.id() {
                 apply_vp(ui.mi_vp.is_checked());
             } else if ev.id == ui.mi_stc.id() {
                 apply_stc(ui.mi_stc.is_checked());
             } else if ev.id == ui.mi_sp_off.id() {
                 apply_spatial(false, 0);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_sp_movie.id() {
                 apply_spatial(true, 0);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_sp_music.id() {
                 apply_spatial(true, 1);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_sp_game.id() {
                 apply_spatial(true, 2);
-                refresh(&last_status, &i18n, &ui, &tray, &low_notified);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_lim.id() {
                 apply_limiter(ui.mi_lim.is_checked());
             } else if ev.id == ui.mi_chat.id() {
@@ -877,8 +1300,27 @@ fn main() {
                 apply_hr(ui.mi_hr.is_checked());
             } else if ev.id == ui.mi_ss.id() {
                 apply_ss(ui.mi_ss.is_checked());
-            } else if ev.id == ui.mi_lr.id() {
-                apply_lr(ui.mi_lr.is_checked());
+            } else if ev.id == ui.mi_lr_off.id() {
+                apply_lr(false, 0);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
+            } else if let Some(&(step, _)) = ui.lr_items.iter().find(|(_, it)| it.id() == &ev.id) {
+                let (on, wire) = lr_step_to_wire(step);
+                apply_lr(on, wire);
+                refresh(
+                    &last_status,
+                    &i18n,
+                    &ui,
+                    &tray,
+                    &low_notified,
+                    &last_linked,
+                );
             } else if ev.id == ui.mi_low_eq.id() {
                 apply_loweq(ui.mi_low_eq.is_checked());
             } else if ev.id == ui.mi_pause.id() {
@@ -898,6 +1340,33 @@ fn main() {
                     apply_findme(false);
                     ringing = None;
                 }
+            } else if ev.id == ui.mi_autostart.id() {
+                autostart::set_enabled(ui.mi_autostart.is_checked());
+                ui.mi_autostart.set_checked(autostart::is_enabled());
+            } else if ev.id == ui.mi_notify_conn.id() {
+                settings::set(
+                    "notify_connection",
+                    &ui.mi_notify_conn.is_checked().to_string(),
+                );
+            } else if ev.id == ui.mi_pause_disconnect.id() {
+                settings::set(
+                    "pause_on_disconnect",
+                    &ui.mi_pause_disconnect.is_checked().to_string(),
+                );
+            } else if ev.id == ui.mi_hotkeys.id() {
+                let enabled = ui.mi_hotkeys.is_checked();
+                settings::set("hotkeys", &enabled.to_string());
+                if let Some(mgr) = &hotkey_manager {
+                    if enabled {
+                        let _ = mgr.register(hk_n);
+                        let _ = mgr.register(hk_t);
+                        let _ = mgr.register(hk_f);
+                    } else {
+                        let _ = mgr.unregister(hk_n);
+                        let _ = mgr.unregister(hk_t);
+                        let _ = mgr.unregister(hk_f);
+                    }
+                }
             } else if let Some((code, _)) = ui.lang_items.iter().find(|(_, it)| it.id() == &ev.id) {
                 let code = code.clone();
                 i18n = I18n::new(&code);
@@ -907,10 +1376,49 @@ fn main() {
             }
         }
 
-        // Next wakeup: short while ringing (to check play), normal otherwise.
+        // Next wakeup: short while ringing (to check play), link check interval otherwise.
         if !matches!(*control_flow, ControlFlow::Exit) {
-            let wait = if ringing.is_some() { RING_POLL } else { POLL };
+            let wait = if ringing.is_some() {
+                RING_POLL
+            } else {
+                LINK_POLL
+            };
             *control_flow = ControlFlow::WaitUntil(Instant::now() + wait);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lr_step_to_wire_and_wire_to_step() {
+        // Center: step 0 -> (true, 0)
+        assert_eq!(lr_step_to_wire(0), (true, 0));
+        assert_eq!(lr_wire_to_step(true, 0), Some(0));
+
+        // Right side: step s > 0 -> (true, s as u8)
+        assert_eq!(lr_step_to_wire(1), (true, 1));
+        assert_eq!(lr_wire_to_step(true, 1), Some(1));
+        assert_eq!(lr_step_to_wire(2), (true, 2));
+        assert_eq!(lr_wire_to_step(true, 2), Some(2));
+        assert_eq!(lr_step_to_wire(3), (true, 3));
+        assert_eq!(lr_wire_to_step(true, 3), Some(3));
+
+        // Left side: step s < 0 -> (true, (256 + s) as u8)
+        assert_eq!(lr_step_to_wire(-1), (true, 255));
+        assert_eq!(lr_wire_to_step(true, 255), Some(-1));
+        assert_eq!(lr_step_to_wire(-2), (true, 254));
+        assert_eq!(lr_wire_to_step(true, 254), Some(-2));
+        assert_eq!(lr_step_to_wire(-3), (true, 253));
+        assert_eq!(lr_wire_to_step(true, 253), Some(-3));
+
+        // Off and invalid/unknown values
+        assert_eq!(lr_step_to_wire(-4), (false, 0));
+        assert_eq!(lr_wire_to_step(false, 0), None);
+        assert_eq!(lr_wire_to_step(false, 1), None);
+        assert_eq!(lr_wire_to_step(true, 4), None);
+        assert_eq!(lr_wire_to_step(true, 252), None);
+    }
 }

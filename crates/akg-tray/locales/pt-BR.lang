@@ -4,6 +4,8 @@ lang.name = Português (Brasil)
 # Status
 status.battery = Bateria: {value}
 status.firmware = Firmware: {value}
+status.name = Nome: {value}
+status.dongle_firmware = Firmware do dongle: {value}
 status.disconnected = desconectado
 status.na = —
 
@@ -21,11 +23,15 @@ autooff.minutes = {n} min
 # Low battery toast notification
 toast.title = AKG N9 — bateria baixa
 toast.body = Bateria em {percent}%. Hora de carregar o fone.
+toast.connected_title = AKG N9 — conectado
+toast.connected_body = Fone conectado. Bateria em {percent}%.
+toast.disconnected_title = AKG N9 — desconectado
+toast.disconnected_body = Fone desconectado.
 
 # Tray tooltip
 tooltip.starting = AKG N9 · iniciando…
 tooltip.disconnected = AKG N9 · desconectado
-tooltip.status = AKG N9 · {battery} · {anc}
+tooltip.status = {name} · {battery} · {anc}
 
 # Diagnostics submenu
 diag.serial = Série: {value}
@@ -51,7 +57,15 @@ menu.limiter = Limitador
 menu.chat_optimizer = Chat Optimizer
 menu.hi_res = Hi-Res
 menu.safe_sound = Safe Sound
-menu.lr_balance = Balanço L/R (centralizar)
+menu.lr_balance = Balanço L/R
+menu.lr_off = Desligado
+menu.lr_left_3 = Esquerda 3
+menu.lr_left_2 = Esquerda 2
+menu.lr_left_1 = Esquerda 1
+menu.lr_center = Centro
+menu.lr_right_1 = Direita 1
+menu.lr_right_2 = Direita 2
+menu.lr_right_3 = Direita 3
 menu.low_volume_eq = EQ volume baixo
 menu.pause_on_remove = Pausar ao tirar o fone
 menu.voiceaware = VoiceAware
@@ -61,6 +75,12 @@ menu.spatial_movie = Filme
 menu.spatial_music = Música
 menu.spatial_game = Jogo
 menu.diag = Diagnóstico
+menu.app = Aplicativo
+menu.autostart = Iniciar com o Windows
+menu.notifications = Notificações
+menu.notify_connection = Avisos de conexão
+menu.pause_on_disconnect = Pausar mídia ao desconectar o fone
+menu.hotkeys = Atalhos globais
 menu.language = Idioma
 menu.power_off = Desligar o fone
 menu.quit = Sair

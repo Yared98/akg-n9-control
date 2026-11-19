@@ -20,7 +20,11 @@ estado e controla os recursos reversíveis do fone, sem depender do app oficial.
   Som espacial (Filme/Música/Jogo), avisos de voz, Speak-to-Chat, VoiceAware (e nível), pausar ao tirar
   o fone, auto-desligar, limitador, Chat Optimizer, Hi-Res, Safe Sound, EQ de volume baixo, balanço L/R,
   achar fone (toca um som; **para ao apertar o play do fone**) e desligar o fone.
+- **Atalhos globais**: `Ctrl+Alt+N` alterna modos de ANC, `Ctrl+Alt+T` liga/desliga o TalkThru e `Ctrl+Alt+F` toca o aviso para achar o fone.
 - **Diagnóstico**: série, chip e firmware (leitura).
+
+## Menu Aplicativo
+O menu **Aplicativo** permite configurar a inicialização com o Windows, alertas de conexão (notificação toast ao conectar/desconectar), pausa automática de mídia ao desconectar o fone, atalhos globais de teclado e o idioma da interface.
 
 ## Build, teste e execução
     cargo test                 # protocolo + parsers (sem precisar do fone)

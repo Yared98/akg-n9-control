@@ -74,10 +74,6 @@ pub fn user_locales_dir() -> Option<PathBuf> {
     user_dir().map(|d| d.join("locales"))
 }
 
-fn settings_path() -> Option<PathBuf> {
-    user_dir().map(|d| d.join("settings.ini"))
-}
-
 /// Every language we can load: the embedded ones, with user files merged on top / added.
 fn load_all() -> Vec<(String, HashMap<String, String>)> {
     let mut all: Vec<(String, HashMap<String, String>)> =
@@ -160,18 +156,12 @@ pub fn system_lang() -> String {
 
 /// The language saved by the user, if any.
 pub fn saved_lang() -> Option<String> {
-    let text = std::fs::read_to_string(settings_path()?).ok()?;
-    parse(&text).get("language").cloned().filter(|s| !s.is_empty())
+    crate::settings::get("language").filter(|s| !s.is_empty())
 }
 
 /// Saves the chosen language. Failures are ignored: the choice just will not survive a restart.
 pub fn save_lang(code: &str) {
-    if let Some(path) = settings_path() {
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(path, format!("# akg-n9-control settings\nlanguage = {code}\n"));
-    }
+    crate::settings::set("language", code);
 }
 
 /// The active language: look strings up with [`I18n::t`] / [`I18n::tf`].

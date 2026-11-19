@@ -4,6 +4,8 @@ lang.name = English
 # Status
 status.battery = Battery: {value}
 status.firmware = Firmware: {value}
+status.name = Name: {value}
+status.dongle_firmware = Dongle firmware: {value}
 status.disconnected = disconnected
 status.na = —
 
@@ -21,11 +23,15 @@ autooff.minutes = {n} min
 # Low battery toast notification
 toast.title = AKG N9 — low battery
 toast.body = Battery at {percent}%. Time to charge the headset.
+toast.connected_title = AKG N9 — connected
+toast.connected_body = Headset connected. Battery at {percent}%.
+toast.disconnected_title = AKG N9 — disconnected
+toast.disconnected_body = Headset disconnected.
 
 # Tray tooltip
 tooltip.starting = AKG N9 · starting…
 tooltip.disconnected = AKG N9 · disconnected
-tooltip.status = AKG N9 · {battery} · {anc}
+tooltip.status = {name} · {battery} · {anc}
 
 # Diagnostics submenu
 diag.serial = Serial: {value}
@@ -51,7 +57,15 @@ menu.limiter = Limiter
 menu.chat_optimizer = Chat Optimizer
 menu.hi_res = Hi-Res
 menu.safe_sound = Safe Sound
-menu.lr_balance = L/R balance (center)
+menu.lr_balance = Balance L/R
+menu.lr_off = Off
+menu.lr_left_3 = Left 3
+menu.lr_left_2 = Left 2
+menu.lr_left_1 = Left 1
+menu.lr_center = Center
+menu.lr_right_1 = Right 1
+menu.lr_right_2 = Right 2
+menu.lr_right_3 = Right 3
 menu.low_volume_eq = Low-volume EQ
 menu.pause_on_remove = Pause on removal
 menu.voiceaware = VoiceAware
@@ -61,6 +75,12 @@ menu.spatial_movie = Movie
 menu.spatial_music = Music
 menu.spatial_game = Game
 menu.diag = Diagnostics
+menu.app = App
+menu.autostart = Start with Windows
+menu.notifications = Notifications
+menu.notify_connection = Connection alerts
+menu.pause_on_disconnect = Pause media when headset disconnects
+menu.hotkeys = Global shortcuts
 menu.language = Language
 menu.power_off = Power off headset
 menu.quit = Quit
