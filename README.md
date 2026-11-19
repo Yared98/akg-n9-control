@@ -39,7 +39,6 @@ official app); see [docs/EQ-NOTES.md](docs/EQ-NOTES.md). **Use at your own risk*
 device can change how it behaves.
 
 ## Documentation
-The documents in `docs/` are written in Portuguese.
 - [docs/FUNCTIONS.md](docs/FUNCTIONS.md): mapped and verified commands (id, payload, classification).
 - [docs/FUNCTIONS_full.md](docs/FUNCTIONS_full.md): index of the 94 methods of the app (**unverified**).
 - [docs/EQ-NOTES.md](docs/EQ-NOTES.md): why music EQ is not supported.

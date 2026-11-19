@@ -1,11 +1,11 @@
-//! AKG N9 Hybrid — app de bandeja.
+//! AKG N9 Hybrid — tray app.
 //!
-//! Mostra bateria, firmware e o estado dos recursos, e controla os reversíveis. Todo controle
-//! on/off é um CheckMenuItem que reflete o estado lido via GET e alterna ao clicar; modos de ANC,
-//! níveis e presets de auto-desligar são checkboxes "rádio" que marcam o item ativo. As escritas
-//! passam pela whitelist dura da crate `akg-race`; flash/FOTA/reset/NVKey nunca são expostos.
+//! Shows battery, firmware, and feature states, and controls reversible settings. Every on/off
+//! control is a CheckMenuItem that reflects the state read via GET and toggles on click; ANC modes,
+//! levels, and auto-off presets are "radio" checkboxes marking the active item. Writes pass through
+//! the strict whitelist in the `akg-race` crate; flash/FOTA/reset/NVKey are never exposed.
 //!
-//! A leitura roda na thread do event loop (bloqueia ~0,5 s a cada 30 s), via `ControlFlow::WaitUntil`.
+//! Reading runs on the event loop thread (blocks ~0.5 s every 30 s), via `ControlFlow::WaitUntil`.
 #![windows_subsystem = "windows"]
 
 mod mediakey;
@@ -36,12 +36,12 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{TrayIconBuilder, TrayIconEvent};
 
 const POLL: Duration = Duration::from_secs(30);
-/// Enquanto o "achar fone" toca: intervalo curto para perceber o Play, e limite de segurança que
-/// para o som e solta o hook de tecla caso ninguém pare (evita engolir o Play/Pause para sempre).
+/// While "find my headphones" is ringing: short interval to detect Play, and safety limit that
+/// stops the sound and releases the key hook if no one stops it (avoids swallowing Play/Pause forever).
 const RING_POLL: Duration = Duration::from_millis(100);
 const RING_MAX: Duration = Duration::from_secs(120);
 
-/// Estado lido do fone num ciclo.
+/// State read from the headset in a cycle.
 #[derive(Default)]
 struct Status {
     connected: bool,
@@ -64,7 +64,7 @@ struct Status {
     chip: Option<String>,
 }
 
-/// Lê uma NVKey como string (descarta zeros/espaços). None se vazia.
+/// Reads an NVKey as a string (discards zeroes/spaces). None if empty.
 fn nvkey_string(report: &[u8]) -> Option<String> {
     let b = parse_nvkey(report)?;
     let s = String::from_utf8_lossy(&b);
@@ -76,7 +76,7 @@ fn nvkey_string(report: &[u8]) -> Option<String> {
     }
 }
 
-/// Presets do auto-desligamento (rótulo, enabled, minutos).
+/// Auto power-off presets (label, enabled, minutes).
 const AUTOOFF_OPTS: [(&str, bool, u16); 6] = [
     ("Nunca", false, 0),
     ("5 min", true, 5),
@@ -86,9 +86,9 @@ const AUTOOFF_OPTS: [(&str, bool, u16); 6] = [
     ("60 min", true, 60),
 ];
 
-/// Envia uma query e tenta ler a resposta por alguns ciclos: o dongle devolve o frame só depois
-/// de 1–3 polls (a 1ª leitura costuma vir velha), então insistimos até o parser casar ou dar
-/// timeout (~0,5 s). Retorna None se nada válido chegar.
+/// Sends a query and tries to read the reply for a few cycles: the dongle returns the frame only after
+/// 1–3 polls (the 1st read is often stale), so we retry until the parser matches or times out
+/// (~0.5 s). Returns None if nothing valid arrives.
 fn query<R>(
     dev: &HidRace,
     req: &[u8; akg_race::REPORT_SIZE],
@@ -110,7 +110,7 @@ fn read_status() -> Status {
     let mut s = Status::default();
     let dev = match HidRace::open() {
         Ok(d) => d,
-        Err(_) => return s, // desconectado
+        Err(_) => return s, // disconnected
     };
     s.connected = true;
     s.fw = query(&dev, &req_fw_version(Role::Headset), parse_fw_version);
@@ -128,13 +128,13 @@ fn read_status() -> Status {
     s.low_eq = query(&dev, &req_low_vol_eq_status(), parse_low_vol_eq_status);
     s.voiceaware = query(&dev, &req_voiceaware_status(), parse_voiceaware_status);
     s.voiceaware_level = query(&dev, &req_voiceaware_level(), parse_voiceaware_level);
-    // Estáticos (série, chip) — NVKey 0xF508 / 0x1002.
+    // Static (serial, chip) — NVKey 0xF508 / 0x1002.
     s.serial = query(&dev, &req_nvkey_read(0xF508, 32), nvkey_string);
     s.chip = query(&dev, &req_nvkey_read(0x1002, 32), nvkey_string);
     s
 }
 
-// ---- helpers de escrita (abrem a conexão na hora; falha de conexão é silenciosa) --------------
+// ---- write helpers (open connection on the fly; connection failure is silent) --------------
 
 fn apply(set: AncSet) {
     if let Ok(dev) = HidRace::open() {
@@ -198,7 +198,7 @@ fn apply_ss(on: bool) {
 }
 fn apply_lr(on: bool) {
     if let Ok(dev) = HidRace::open() {
-        let _ = apply_lr_balance(&dev, on, 0); // nível 0 (centralizado); ajuste fino a validar
+        let _ = apply_lr_balance(&dev, on, 0); // level 0 (centered); fine tuning to be validated
     }
 }
 fn apply_loweq(on: bool) {
@@ -241,7 +241,7 @@ fn tooltip(s: &Status) -> String {
     format!("AKG N9 · {bat} · {anc}")
 }
 
-/// Cor do ícone conforme a bateria: teal (ok), âmbar (média), vermelho (baixa), cinza (sem leitura).
+/// Icon color based on battery: teal (ok), amber (medium), red (low), gray (no reading).
 fn icon_color(s: &Status) -> [u8; 3] {
     match s.battery {
         _ if !s.connected => [0x80, 0x80, 0x80],
@@ -252,9 +252,9 @@ fn icon_color(s: &Status) -> [u8; 3] {
     }
 }
 
-/// Ícone 32×32 desenhado em memória: silhueta de headphone (arco da haste + duas conchas),
-/// na cor dada, fundo transparente. Sem arquivo externo.
-/// Toast nativo do Windows avisando bateria baixa (usa o app id do PowerShell, sem registro).
+/// 32×32 icon drawn in memory: headphone silhouette (headband arc + two earcups),
+/// in the given color, transparent background. No external file.
+/// Native Windows toast warning of low battery (uses PowerShell app id, no registration).
 fn notify_low_battery(pct: u8) {
     let _ = Toast::new(Toast::POWERSHELL_APP_ID)
         .title("AKG N9 — bateria baixa")
@@ -265,7 +265,7 @@ fn notify_low_battery(pct: u8) {
 fn make_icon(rgb: [u8; 3]) -> tray_icon::Icon {
     const N: i32 = 32;
     let mut rgba = vec![0u8; (N * N * 4) as usize];
-    // Elipse preenchida (concha), eixos (rx, ry) centrada em (cx, cy).
+    // Filled ellipse (earcup), axes (rx, ry) centered at (cx, cy).
     let ear = |fx: f32, fy: f32, cx: f32, cy: f32, rx: f32, ry: f32| {
         let ex = (fx - cx) / rx;
         let ey = (fy - cy) / ry;
@@ -274,14 +274,14 @@ fn make_icon(rgb: [u8; 3]) -> tray_icon::Icon {
     for y in 0..N {
         for x in 0..N {
             let (fx, fy) = (x as f32, y as f32);
-            // Haste: anel centrado em (15.5, 15) só na metade de cima (arco).
+            // Headband: ring centered at (15.5, 15) only on the top half (arc).
             let (dx, dy) = (fx - 15.5, fy - 15.0);
             let r = (dx * dx + dy * dy).sqrt();
             let band = r > 9.3 && r < 12.3 && fy < 15.5;
-            // Conchas nas pontas do arco.
+            // Earcups at the ends of the arc.
             let cup_l = ear(fx, fy, 5.0, 20.0, 3.6, 6.2);
             let cup_r = ear(fx, fy, 26.0, 20.0, 3.6, 6.2);
-            // "Almofada" interna mais clara dá leitura de headphone (opcional, mesma cor aqui).
+            // Lighter inner "cushion" gives headphone look (optional, same color here).
             if band || cup_l || cup_r {
                 let i = ((y * N + x) * 4) as usize;
                 rgba[i..i + 4].copy_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
@@ -295,17 +295,17 @@ fn main() {
     let event_loop = EventLoopBuilder::new().build();
     let menu = Menu::new();
 
-    // Linhas de status (desabilitadas).
+    // Status lines (disabled).
     let mi_bat = MenuItem::new("Bateria: —", false, None);
     let mi_fw = MenuItem::new("Firmware: —", false, None);
 
-    // Modos de escuta — checkboxes "rádio": o ativo fica marcado.
+    // Listening modes — "radio" checkboxes: the active one is checked.
     let mi_off = CheckMenuItem::new("ANC desligado", true, false, None);
     let mi_anc = CheckMenuItem::new("ANC ligado", true, false, None);
     let mi_talk = CheckMenuItem::new("TalkThru", true, false, None);
     let mi_amb = CheckMenuItem::new("Ambiente", true, false, None);
 
-    // Nível 1..=7 — checkboxes "rádio".
+    // Level 1..=7 — "radio" checkboxes.
     let levels: Vec<CheckMenuItem> = (1..=7)
         .map(|n| CheckMenuItem::new(format!("Nível {n}"), true, false, None))
         .collect();
@@ -319,11 +319,11 @@ fn main() {
         )
         .expect("submenu nivel");
 
-    // Avisos de voz + Speak-to-Chat — toggles de estado.
+    // Voice prompts + Speak-to-Chat — state toggles.
     let mi_vp = CheckMenuItem::new("Avisos de voz", true, false, None);
     let mi_stc = CheckMenuItem::new("Speak-to-Chat", true, false, None);
 
-    // Auto-desligar — checkboxes "rádio" com o preset ativo marcado.
+    // Auto-off — "radio" checkboxes with active preset checked.
     let autooff: Vec<CheckMenuItem> = AUTOOFF_OPTS
         .iter()
         .map(|(l, _, _)| CheckMenuItem::new(*l, true, false, None))
@@ -338,12 +338,12 @@ fn main() {
         )
         .expect("submenu autooff");
 
-    // Achar fone — ações one-shot (não são toggle de estado).
-    // Achar fone: checkbox único. Marcado = tocando; desmarcar (ou apertar o play do fone) para.
+    // Find my headphones — one-shot actions (not a state toggle).
+    // Find my headphones: single checkbox. Checked = ringing; unchecking (or pressing play on the headset) stops.
     let mi_find = CheckMenuItem::new("Achar fone (tocar som)", true, false, None);
     let r_find = mi_find.clone();
 
-    // Recursos — toggles de estado.
+    // Features — state toggles.
     let mi_lim = CheckMenuItem::new("Limitador", true, false, None);
     let mi_chat = CheckMenuItem::new("Chat Optimizer", true, false, None);
     let mi_hr = CheckMenuItem::new("Hi-Res", true, false, None);
@@ -366,7 +366,7 @@ fn main() {
         ])
         .expect("submenu recursos");
 
-    // VoiceAware nível 1..=5 — checkboxes "rádio".
+    // VoiceAware level 1..=5 — "radio" checkboxes.
     let va_levels: Vec<CheckMenuItem> = (1..=5)
         .map(|n| CheckMenuItem::new(format!("Nível {n}"), true, false, None))
         .collect();
@@ -381,7 +381,7 @@ fn main() {
         .expect("submenu voiceaware nivel");
 
 
-    // Som espacial — checkboxes "rádio": Desligado / Filme / Música / Jogo.
+    // Spatial sound — "radio" checkboxes: Off / Movie / Music / Game.
     let mi_sp_off = CheckMenuItem::new("Desligado", true, false, None);
     let mi_sp_movie = CheckMenuItem::new("Filme", true, false, None);
     let mi_sp_music = CheckMenuItem::new("Música", true, false, None);
@@ -391,7 +391,7 @@ fn main() {
         .append_items(&[&mi_sp_off, &mi_sp_movie, &mi_sp_music, &mi_sp_game])
         .expect("submenu som espacial");
 
-    // Diagnóstico — leitura estática (NVKey). Linhas desabilitadas.
+    // Diagnostics — static reading (NVKey). Disabled lines.
     let mi_diag_serial = MenuItem::new("Série: —", false, None);
     let mi_diag_chip = MenuItem::new("Chip: —", false, None);
     let mi_diag_fw = MenuItem::new("Firmware: —", false, None);
@@ -439,7 +439,7 @@ fn main() {
     let menu_rx = MenuEvent::receiver();
     let _tray_rx = TrayIconEvent::receiver();
 
-    // Clones para o refresh (set_checked); os originais ficam para o tratamento de clique.
+    // Clones for refresh (set_checked); originals remain for click handling.
     let (r_off, r_anc, r_talk, r_amb) = (mi_off.clone(), mi_anc.clone(), mi_talk.clone(), mi_amb.clone());
     let r_levels: Vec<CheckMenuItem> = levels.iter().map(|m| m.clone()).collect();
     let (r_vp, r_stc) = (mi_vp.clone(), mi_stc.clone());
@@ -455,7 +455,7 @@ fn main() {
     let r_va = mi_va.clone();
     let r_va_levels: Vec<CheckMenuItem> = va_levels.iter().map(|m| m.clone()).collect();
 
-    // Histerese da notificação de bateria: avisa ≤15%, rearma ≥25% (evita repetir a cada ciclo).
+    // Battery notification hysteresis: alerts ≤15%, rearms ≥25% (avoids repeating every cycle).
     let low_notified = std::cell::Cell::new(false);
 
     let refresh = move |tray: &tray_icon::TrayIcon| {
@@ -477,7 +477,7 @@ fn main() {
                 .unwrap_or_else(|| if s.connected { "?".into() } else { "desconectado".into() })
         ));
         mi_fw.set_text(format!("Firmware: {}", s.fw.clone().unwrap_or_else(|| "—".into())));
-        // Diagnóstico (estático).
+        // Diagnostics (static).
         if let Some(v) = s.serial.clone() {
             mi_diag_serial.set_text(format!("Série: {v}"));
         }
@@ -486,20 +486,20 @@ fn main() {
         }
         mi_diag_fw.set_text(format!("Firmware: {}", s.fw.clone().unwrap_or_else(|| "—".into())));
 
-        // Modos de ANC: marca o ativo.
+        // ANC modes: checks the active one.
         let mode = s.anc.map(|(m, _)| m);
         r_off.set_checked(mode == Some(AncMode::Off));
         r_anc.set_checked(mode == Some(AncMode::Anc));
         r_talk.set_checked(mode == Some(AncMode::TalkThru));
         r_amb.set_checked(mode == Some(AncMode::Ambient));
 
-        // Nível: marca o ativo (1..=7).
+        // Level: checks the active one (1..=7).
         let lvl = s.anc.map(|(_, l)| l);
         for (i, it) in r_levels.iter().enumerate() {
             it.set_checked(lvl == Some((i + 1) as u16));
         }
 
-        // Som espacial: marca o ativo (Desligado quando !on; senão Filme/Música/Jogo conforme type 0/1/2).
+        // Spatial sound: checks the active one (Off when !on; otherwise Movie/Music/Game according to type 0/1/2).
         if let Some((on, kind)) = s.spatial_full {
             r_sp_off.set_checked(!on);
             r_sp_movie.set_checked(on && kind == 0);
@@ -507,7 +507,7 @@ fn main() {
             r_sp_game.set_checked(on && kind == 2);
         }
 
-        // Toggles de estado: só atualiza quando o GET respondeu (senão mantém o último).
+        // State toggles: only updates when GET replied (otherwise keeps the last state).
         if let Some(v) = s.vp {
             r_vp.set_checked(v);
         }
@@ -536,25 +536,25 @@ fn main() {
             r_va.set_checked(v);
         }
 
-        // VoiceAware nível: marca o ativo (1..=5).
+        // VoiceAware level: checks the active one (1..=5).
         let va_lvl = s.voiceaware_level;
         for (i, it) in r_va_levels.iter().enumerate() {
             it.set_checked(va_lvl == Some((i + 1) as u16));
         }
 
-        // Auto-desligar: marca o preset ativo.
+        // Auto-off: checks the active preset.
         for (i, it) in r_autooff.iter().enumerate() {
             let (_, en, min) = AUTOOFF_OPTS[i];
             let checked = match s.auto_off {
                 Some((false, _)) => !en,              // "Nunca"
-                Some((true, t)) => en && t == min,    // preset de minutos
+                Some((true, t)) => en && t == min,    // minutes preset
                 None => false,
             };
             it.set_checked(checked);
         }
     };
 
-    // "Achar fone" tocando: (momento em que começou, hook da tecla Play/Pause se instalou).
+    // "Find my headphones" ringing: (instant when started, Play/Pause key hook if installed).
     let mut ringing: Option<(Instant, Option<PlayStopHook>)> = None;
 
     event_loop.run(move |event, _, control_flow| {
@@ -562,13 +562,13 @@ fn main() {
             Event::NewEvents(StartCause::Init) => refresh(&tray),
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if let Some((since, hook)) = &ringing {
-                    // Tocando: não faz leituras demoradas (o hook precisa do loop livre). Só checa
-                    // se o play foi apertado ou se estourou o limite de segurança.
+                    // Ringing: does not perform slow reads (the hook needs a free loop). Only checks
+                    // if play was pressed or if safety limit was reached.
                     let pressed = hook.as_ref().map_or(false, |h| h.take_pressed());
                     if pressed || since.elapsed() >= RING_MAX {
                         apply_findme(false);
                         r_find.set_checked(false);
-                        ringing = None; // solta o hook
+                        ringing = None; // drop the hook
                     }
                 } else {
                     refresh(&tray);
@@ -640,17 +640,17 @@ fn main() {
                 apply_va_level((n + 1) as u16);
             } else if ev.id == mi_find.id() {
                 if mi_find.is_checked() {
-                    // Começou a tocar: instala o hook do Play/Pause (None = sem o atalho do botão).
+                    // Started ringing: installs the Play/Pause hook (None = without button shortcut).
                     apply_findme(true);
                     ringing = Some((Instant::now(), PlayStopHook::install()));
                 } else {
                     apply_findme(false);
-                    ringing = None; // solta o hook
+                    ringing = None; // drop the hook
                 }
             }
         }
 
-        // Próximo despertar: curto enquanto toca (para checar o play), normal caso contrário.
+        // Next wakeup: short while ringing (to check play), normal otherwise.
         if !matches!(*control_flow, ControlFlow::Exit) {
             let wait = if ringing.is_some() { RING_POLL } else { POLL };
             *control_flow = ControlFlow::WaitUntil(Instant::now() + wait);

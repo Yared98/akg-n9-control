@@ -1,180 +1,181 @@
-# Funções do AKG N9 Hybrid (protocolo RACE)
+# AKG N9 Hybrid functions (RACE protocol)
 
-Dispositivo: AKG N9 Hybrid · SoC Airoha AB1585 (família AB158x; via NVKey 0x1002) · firmware **v4.5.0**.
-Canais (ambos coleção HID `FF13:0001`, relatórios de 62 bytes):
-- **Fone por USB-C:** `0ECB:20D8` coleção COL01 — canal preferido, resposta limpa.
-- **Dongle 2.4 GHz:** `0ECB:20D9` interface MI_03 COL02 — fallback (relay para o fone).
+Portuguese version: [pt-BR/FUNCTIONS.md](pt-BR/FUNCTIONS.md)
 
-Enquadramento: requisição `05 5A <tam LE> <id LE> <payload>`, embrulho HID `06 <tam> 80 <pacote>`;
-resposta por `GetInputReport(0x07)`, byte 1 = bytes válidos; frame `05 5B|5D <tam LE> <id LE> <corpo>`.
+Device: AKG N9 Hybrid · Airoha AB1585 SoC (AB158x family; via NVKey 0x1002) · firmware **v4.5.0**.
+Channels (both HID collection `FF13:0001`, 62-byte reports):
+- **Headset over USB-C:** `0ECB:20D8` collection COL01 — preferred channel, clean response.
+- **2.4 GHz Dongle:** `0ECB:20D9` interface MI_03 COL02 — fallback (relay to headset).
 
-Classificação: **LEITURA** · **ESCRITA REVERSÍVEL** · **PERIGOSO** (fora do app).
+Framing: request `05 5A <len LE> <id LE> <payload>`, HID wrapper `06 <len> 80 <packet>`;
+response via `GetInputReport(0x07)`, byte 1 = valid bytes; frame `05 5B|5D <len LE> <id LE> <body>`.
 
-## Verificados em hardware (LEITURA)
+Classification: **READ** · **REVERSIBLE WRITE** · **DANGEROUS** (outside the app).
 
-| Função | id | Pacote enviado | Resposta / decodificação | Canal |
+## Verified on hardware (READ)
+
+| Function | id | Sent packet | Response / decoding | Channel |
 |---|---|---|---|---|
-| Bateria | `0x0CD6` | `05 5A 03 00 D6 0C 00` | `… D6 0C 00 <agente> <pct>` → pct 0–100 | USB ok |
-| ANC (status) | `0x0901` | `05 5A 04 00 01 09 05 00` | filtro: `00`=off, `01`=ANC, `09`=TalkThru, `0A`=Ambient Aware; nível 1–7 | USB+dongle ok |
-| Versão de firmware | `0x1C07` | `05 5A 03 00 07 1C <00 fone\|01 dongle>` | `… <status> <agente> <tam> <ascii>` → "v4.5.0" | USB ok |
-| Model ID | `0x000E` | `05 5A 02 00 0E 00` | byte do MID (deu `00`) | USB ok |
-| Ler NVKey | `0x0A00` | `05 5A 06 00 00 0A <nvid LE> <tam máx LE>` | `<tam LE> <dados>` (tam 0 = chave vazia) | USB ok |
-| Info de partição | `0x1C00` | `05 5A 03 00 00 1C 00` | partId, tipo, endereço (int32 LE), tamanho (int32 LE). Obtido: início `0x4ED000`, tam `0x302000` (FOTA) | USB ok |
+| Battery | `0x0CD6` | `05 5A 03 00 D6 0C 00` | `… D6 0C 00 <agent> <pct>` → pct 0–100 | USB ok |
+| ANC (status) | `0x0901` | `05 5A 04 00 01 09 05 00` | filter: `00`=off, `01`=ANC, `09`=TalkThru, `0A`=Ambient Aware; level 1–7 | USB+dongle ok |
+| Firmware version | `0x1C07` | `05 5A 03 00 07 1C <00 headset\|01 dongle>` | `… <status> <agent> <len> <ascii>` → "v4.5.0" | USB ok |
+| Model ID | `0x000E` | `05 5A 02 00 0E 00` | MID byte (returned `00`) | USB ok |
+| Read NVKey | `0x0A00` | `05 5A 06 00 00 0A <nvid LE> <maxlen LE>` | `<len LE> <data>` (len 0 = empty key) | USB ok |
+| Partition info | `0x1C00` | `05 5A 03 00 00 1C 00` | partId, type, address (int32 LE), size (int32 LE). Obtained: start `0x4ED000`, size `0x302000` (FOTA) | USB ok |
 
-### NVKeys conhecidos (via `0x0A00`)
-| NVKey | Conteúdo | Observação |
+### Known NVKeys (via `0x0A00`)
+| NVKey | Content | Note |
 |---|---|---|
-| `0xF202` | Nome padrão: "AKG N9 Hybrid" | leitura |
-| `0xF203` | Nome personalizado | vazio (não definido) |
-| `0xF204` | `01` | a interpretar |
-| `0x1002` | Nome do chip: "AB1585_Headset" | SoC = Airoha AB1585 (AB158x) |
+| `0xF202` | Default name: "AKG N9 Hybrid" | read |
+| `0xF203` | Custom name | empty (not set) |
+| `0xF204` | `01` | to be interpreted |
+| `0x1002` | Chip name: "AB1585_Headset" | SoC = Airoha AB1585 (AB158x) |
 
-## PERIGOSO (nunca enviar sem aprovação humana, comando a comando)
+## DANGEROUS (never send without human approval, command-by-command)
 Flash: sector erase `1796` (`0x0704`), page program `1799` (`0x0707`), set protect `1794` (`0x0702`);
-programação de FOTA; factory reset; shutdown; escrita de NVKey `0x0A01` / `2561`.
-Estes ficam fora do app. Dump de firmware (leitura) é objetivo separado (Fase 4, RACE Toolkit da ERNW).
+FOTA programming; factory reset; shutdown; NVKey write `0x0A01` / `2561`.
+These remain outside the app. Firmware dumping (read) is a separate goal (Phase 4, ERNW RACE Toolkit).
 
-## Pendente
-- Mapear o filtro do **TalkThru** no ANC (precisa alternar o modo no app oficial).
-- Varredura completa de NVKeys do fone (rodando) → preencher recursos escondidos.
-- Cruzar os 94 métodos de `FUNCTIONS_full.md` (conferindo cada id no código) para completar esta tabela.
+## Pending
+- Map **TalkThru** filter in ANC (requires switching mode in official app).
+- Full NVKey sweep of the headset (running) → identify hidden features.
+- Cross-reference the 94 methods in `FUNCTIONS_full.md` (checking each id in code) to complete this table.
 
-## Revisão de segurança do Claude (sobre a tabela completa em FUNCTIONS_full.md)
-Tabela dos 94 comandos gerada por worker e conferida aqui nos pontos de segurança:
-- **10 PERIGOSO** (factory reset, shutdown, pareamentos, apagar dispositivos/telemetria/wallpaper):
-  ficam FORA do app. Alguns ids desses foram inferidos pelo worker (ex.: vários como 0x1101
-  "send key event"); como não serão enviados, o id exato é irrelevante.
-- **Atenção — escrita de NVKey (0x0A01 / 2561):** `setMultiAIStatus` e `setAutoStandbyModeList`
-  foram marcados "reversível", mas persistem via escrita de NVKey. São reversíveis (ajuste de
-  config), porém, pela regra do goal, a camada de escrita do app deve ter uma LISTA BRANCA de
-  NVKeys específicos permitidos e pedir aprovação; nunca escrever NVKey por id de comando genérico.
-- **EQ:** `setEQPreset` é stub vazio em N9NCControl. O EQ de verdade é `setEQSettings2` /
-  `getEQSettings2`. A Fase 3 deve usar esses, não o preset.
-- Os controles reversíveis seguros para a Fase 3 (ANC, ambiente, EQ via EQSettings2) continuam
-  valendo, sempre testados um a um no hardware com o app oficial aberto.
+## Claude security review (on the complete table in FUNCTIONS_full.md)
+Table of 94 commands generated by a worker and checked here regarding safety points:
+- **10 DANGEROUS** (factory reset, shutdown, pairings, delete devices/telemetry/wallpaper):
+  remain OUTSIDE the app. Some of these ids were inferred by the worker (e.g., several as 0x1101
+  "send key event"); since they will not be sent, the exact id is irrelevant.
+- **Attention — NVKey write (0x0A01 / 2561):** `setMultiAIStatus` and `setAutoStandbyModeList`
+  were marked "reversible", but persist via NVKey write. They are reversible (config adjustment),
+  however, under the goal rule, the app's write layer must maintain a WHITELIST of specific
+  permitted NVKeys and require approval; never write NVKeys by generic command id.
+- **EQ:** `setEQPreset` is an empty stub in N9NCControl. Real EQ is `setEQSettings2` /
+  `getEQSettings2`. Phase 3 must use those, not the preset.
+- Reversible safe controls for Phase 3 (ANC, ambient, EQ via EQSettings2) remain valid,
+  always tested one-by-one on hardware with the official app open.
 
-## NVKeys achados na varredura do fone (383 chaves com conteúdo)
-O dump completo de NVKeys (383 chaves) não é publicado: contém identificadores do aparelho (MAC, série). Destaques (tudo leitura, via `0x0A00`):
-| NVKey | Conteúdo | Significado |
+## NVKeys found in headset sweep (383 keys with content)
+The full NVKey dump (383 keys) is not published: contains device identifiers (MAC, serial). Highlights (all read, via `0x0A00`):
+| NVKey | Content | Meaning |
 |---|---|---|
-| `0x1002` | `AB1585_Headset` | SoC Airoha AB1585 |
-| `0x1003` | `AKG…20D8…` | modelo / id USB |
-| `0x1854` | `<omitido: MAC Bluetooth do fone>` | endereço Bluetooth do fone |
-| `0x3901` | `AKG N9 Hybrid-LE` | nome BLE |
-| `0xF202` | `AKG N9 Hybrid` | nome Bluetooth clássico |
-| `0xF508` | `<omitido: número de série>` | número de série |
-| `0xE080`–`0xE094` | rampas de bytes | tabelas de EQ / coeficientes de filtro ANC |
-| `0x20xx` | valores curtos | flags/ajustes (EQ, ANC, auto-off etc.) a decodificar |
+| `0x1002` | `AB1585_Headset` | Airoha AB1585 SoC |
+| `0x1003` | `AKG…20D8…` | model / USB id |
+| `0x1854` | `<omitted: headset Bluetooth MAC>` | headset Bluetooth address |
+| `0x3901` | `AKG N9 Hybrid-LE` | BLE name |
+| `0xF202` | `AKG N9 Hybrid` | Classic Bluetooth name |
+| `0xF508` | `<omitted: serial number>` | serial number |
+| `0xE080`–`0xE094` | byte ramps | EQ tables / ANC filter coefficients |
+| `0x20xx` | short values | flags/settings (EQ, ANC, auto-off etc.) to decode |
 
-Observação: `0x1854` (endereço BT) e `0xF508` (série) identificam o aparelho; ficam só local.
-A maioria das 383 chaves são blocos zerados (não inicializados) — ruído, ignorar.
+Note: `0x1854` (BT address) and `0xF508` (serial) identify the device; they remain strictly local.
+Most of the 383 keys are zeroed blocks (uninitialized) — noise, ignore.
 
-## Fase 3 — comandos de ESCRITA (VALIDADOS no hardware, reversíveis)
-Testados no fone **via dongle** (PID_20D9, COL02), com app oficial aberto, em 18/11/2026.
-**O dongle relaya escrita** (não só leitura): cada write recebeu ack e foi confirmado relendo `0x0901`.
-Comando ANC: id `0x0E06` (3590). Payloads extraídos do APK (`AncStageAncOff/AncOn.genRacePackets`):
-Off = `00 0B 01`; On = `00 0A <filtro> 00 01` (o **`01` final é o enable** — era o que faltava).
-| Ação | Pacote RACE (app-exato) | Readback 0x0901 | Status |
+## Phase 3 — WRITE commands (VALIDATED on hardware, reversible)
+Tested on the headset **via dongle** (PID_20D9, COL02), with official app open, on 11/18/2026.
+**The dongle relays writes** (not just reads): each write received an ack and was confirmed by re-reading `0x0901`.
+ANC command: id `0x0E06` (3590). Payloads extracted from the APK (`AncStageAncOff/AncOn.genRacePackets`):
+Off = `00 0B 01`; On = `00 0A <filter> 00 01` (the **final `01` is the enable** — that was what was missing).
+| Action | RACE packet (app-exact) | Readback 0x0901 | Status |
 |---|---|---|---|
-| Desligar ANC | `05 5A 05 00 06 0E 00 0B 01` | filter→`00` | ✅ modo troca (validado; forma curta `…0B` também funcionou) |
-| ANC | `05 5A 07 00 06 0E 00 0A 01 00 01` | filter→`01` | ✅ modo troca |
-| TalkThru | `05 5A 07 00 06 0E 00 0A 09 00 01` | filter→`09` | ✅ modo troca (usuário confirmou; faltava o enable) |
-| Ambiente | `05 5A 07 00 06 0E 00 0A 0A 00 01` | filter→`0A` | ✅ modo troca (usuário confirmou) |
-| Nível ambiente (ganho) | `05 5A 06 00 06 0E 00 0F <ganho LE>` | — | ⏳ nível/intensidade, a ligar |
-- **Descoberta**: a 1ª tentativa mandava `00 0A <filtro> 00` (sem o `01` final). ANC (01) trocava
-  assim mesmo, mas TalkThru/Ambient não — davam ack e o modo não mudava. Com o enable `01` todos
-  trocam. O **nível/intensidade** de cada modo é um comando separado (ganho `0x0F` p/ ambiente),
-  ainda não ligado no tray.
-- `<filtro>` (igual na leitura 0x0901 e na escrita AncOn): 01=ANC, 09=TalkThru, 0A=Ambient; off = sub-op `0B`.
-- `setANCSubMode` = "Not Support" neste fone; o modo de escuta vai por `setAncSetting`
+| Turn off ANC | `05 5A 05 00 06 0E 00 0B 01` | filter→`00` | ✅ mode switches (validated; short form `…0B` also worked) |
+| ANC | `05 5A 07 00 06 0E 00 0A 01 00 01` | filter→`01` | ✅ mode switches |
+| TalkThru | `05 5A 07 00 06 0E 00 0A 09 00 01` | filter→`09` | ✅ mode switches (the owner confirmed; enable was missing) |
+| Ambient | `05 5A 07 00 06 0E 00 0A 0A 00 01` | filter→`0A` | ✅ mode switches (the owner confirmed) |
+| Ambient level (gain) | `05 5A 06 00 06 0E 00 0F <gain LE>` | — | ⏳ level/intensity, to wire up |
+- **Discovery**: the 1st attempt sent `00 0A <filter> 00` (without the trailing `01`). ANC (01) still switched,
+  but TalkThru/Ambient did not — they returned ack and mode didn't change. With the `01` enable all switch.
+  The **level/intensity** of each mode is a separate command (gain `0x0F` for ambient), not yet wired in tray.
+- `<filter>` (same in read 0x0901 and write AncOn): 01=ANC, 09=TalkThru, 0A=Ambient; off = sub-op `0B`.
+- `setANCSubMode` = "Not Support" on this headset; listening mode goes through `setAncSetting`
   (flow SET_ANC_SETTINGS) → AncStageAncOn (0x0E06).
-- EQ: `setEQSettings2` ramifica em `AirohaEQControl` (linha 251): `category==201` → **PersoniFi EQ**
-  (id `0x0071` set / `0x0070` get; ganho int32 LE, dB×100, −12..+12 dB — ver `EQ-NOTES.md`).
-  O EQ de **bandas** normal usa o flow `SET_EQ_SETTINGS` com `AirohaEQPayload`; o estágio/mRaceId
-  dele é mapeado indiretamente e ainda **não foi resolvido**. EQ não implementado no app (polish).
-- Protocolo de teste (com você): 1 escrita → ler 0x0901 → conferir no app oficial → desfazer.
+- EQ: `setEQSettings2` branches in `AirohaEQControl` (line 251): `category==201` → **PersoniFi EQ**
+  (id `0x0071` set / `0x0070` get; gain int32 LE, dB×100, −12..+12 dB — see `EQ-NOTES.md`).
+  Standard **band** EQ uses flow `SET_EQ_SETTINGS` with `AirohaEQPayload`; its stage/mRaceId
+  is mapped indirectly and **has not yet been resolved**. EQ not implemented in app (polish).
+- Test protocol (with you): 1 write → read 0x0901 → check in official app → revert.
 
-## Recursos reversíveis adicionais (payloads verificados no `genRacePackets` do APK)
-Confirmados como recursos do N9 via `getAllDashboardCommands`. Ids na whitelist da crate.
-| Recurso | id | Payload | Builder (akg-race) | No tray |
+## Additional reversible features (payloads verified in APK genRacePackets)
+Confirmed as N9 features via `getAllDashboardCommands`. Ids in crate whitelist.
+| Feature | id | Payload | Builder (akg-race) | In tray |
 |---|---|---|---|---|
-| Nível ANC/Ambiente | `0x0E06` | `00 1E <nível LE16>` (sub-op 0x1E) | `apply_anc_level` | ✅ submenu Nível 1–7 |
-| Avisos de voz | `0x0900` | `01 00 <onOff>` | `apply_voice_prompt` | ✅ ligar/desligar |
-| Áudio espacial 3D | `0x0012` | `<onOff> <tipo>` | `apply_spatial_3d` | — (lib) |
-| Balanço L/R | `0x0036` | `<onOff> <nível>` | `apply_lr_balance` | — (lib) |
-| Limitador de áudio | `0x0050` | `<onOff>` | `apply_audio_limiter` | — (lib) |
+| ANC/Ambient level | `0x0E06` | `00 1E <level LE16>` (sub-op 0x1E) | `apply_anc_level` | ✅ submenu Level 1–7 |
+| Voice prompts | `0x0900` | `01 00 <onOff>` | `apply_voice_prompt` | ✅ enable/disable |
+| 3D Spatial audio | `0x0012` | `<onOff> <kind>` | `apply_spatial_3d` | — (lib) |
+| L/R Balance | `0x0036` | `<onOff> <level>` | `apply_lr_balance` | — (lib) |
+| Audio limiter | `0x0050` | `<onOff>` | `apply_audio_limiter` | — (lib) |
 | Chat Optimizer | `0x0052` | `<onOff>` | `apply_chat_optimizer` | — (lib) |
 
-Outros SETs mapeados (ainda não implementados): SilentNow `0x0069` (payload de 10B: status+durações
-LE16), MicGainLevel `0x0065`, HiRes `0x0076`, PSAP `0x0078`, SafeSound `0x0015`, 3DSpatial type.
-**Fora da whitelist por segurança:** gesto e auto-standby usam `0x0A01` (escrita de NVKey) — exigem
-aprovação comando a comando; não entram no app como toggle simples.
+Other mapped SETs (not yet implemented): SilentNow `0x0069` (10B payload: status+durations LE16),
+MicGainLevel `0x0065`, HiRes `0x0076`, PSAP `0x0078`, SafeSound `0x0015`, 3DSpatial type.
+**Outside whitelist for safety:** gesture and auto-standby use `0x0A01` (NVKey write) — require
+command-by-command approval; do not enter app as simple toggles.
 
-## Lote 3 — toggles de fone (payloads verificados)
-| Recurso | id | Payload | Builder | No tray |
+## Batch 3 — headset toggles (verified payloads)
+| Feature | id | Payload | Builder | In tray |
 |---|---|---|---|---|
-| Auto-desligamento | `0x2C82` | `01 00 <en> 00 <min LE16>` (MODULE_ID=1) | `apply_auto_power_off` | ✅ submenu (Nunca/5/10/15/30/60) |
-| Achar fone (tocar som) | `0x2C01` | `<blink> <ring> <target>` | `apply_find_me` | ✅ botão |
-| Speak-to-Chat | `0x0061` | `<onOff> <latency>` | `apply_speak_to_chat` | ✅ ligar/desligar |
-| PSAP (realce auditivo) | `0x0078` | `<onOff> <level> <index>` | `apply_psap` | — (lib) |
-| Safe Sound | `0x0015` | `<modo>` | `apply_safe_sound` | — (lib) |
-- `0x2C82`=RACE_SET_MMI_COMMON_CONFIG, `0x2C01`=RACE_FIND_ME (resolvidos de `RaceId.java`).
-- Sound Effect roteia por SoundEffectInfo→categoria de EQ (fica com o EQ de bandas, pendente).
+| Auto power-off | `0x2C82` | `01 00 <en> 00 <min LE16>` (MODULE_ID=1) | `apply_auto_power_off` | ✅ submenu (Never/5/10/15/30/60) |
+| Find my headphones (play sound) | `0x2C01` | `<blink> <ring> <target>` | `apply_find_me` | ✅ button |
+| Speak-to-Chat | `0x0061` | `<onOff> <latency>` | `apply_speak_to_chat` | ✅ enable/disable |
+| PSAP (auditory enhancement) | `0x0078` | `<onOff> <level> <index>` | `apply_psap` | — (lib) |
+| Safe Sound | `0x0015` | `<mode>` | `apply_safe_sound` | — (lib) |
+- `0x2C82`=RACE_SET_MMI_COMMON_CONFIG, `0x2C01`=RACE_FIND_ME (resolved from `RaceId.java`).
+- Sound Effect routes through SoundEffectInfo→EQ category (remains with band EQ, pending).
 
-## EQ de bandas — CONCLUSÃO: fora de escopo por segurança
-Investigado a fundo (flow `SET_EQ_SETTINGS` → `AirohaPEQControl1568`/`AirohaPeqMgr`):
-- O EQ de bandas é **paramétrico** (`AirohaEQPayload`: bandCount, IIR por banda, L/R gain, sampleRate).
-- Os coeficientes são **persistidos via escrita de NVKey `0x0A01`** (`PeqStageSaveCoef`,
-  `PeqStageSaveUiData`, `PeqStageSaveUiExtData`...). Isso é **exatamente** a operação que o goal
-  proíbe sem aprovação humana comando a comando. **Não implementado** — barrado pela regra de segurança.
-- `PeqStageSetPeqGrpIdx` (0x0900, payload `00 00 <idx>`) só troca o grupo PEQ ativo (reversível),
-  mas depende de grupos já gravados e está acoplado ao fluxo que salva via NVKey; sem valor isolado.
-- PersoniFi EQ (0x0071, do worker) é um perfil personalizado à parte (não é o EQ de bandas do app).
-Resumo: o único "EQ" seguro seria trocar um preset já existente; edição de bandas exige NVKey-write.
+## Band EQ — CONCLUSION: out of scope for safety
+Investigated in depth (flow `SET_EQ_SETTINGS` → `AirohaPEQControl1568`/`AirohaPeqMgr`):
+- Band EQ is **parametric** (`AirohaEQPayload`: bandCount, IIR per band, L/R gain, sampleRate).
+- Coefficients are **persisted via NVKey write `0x0A01`** (`PeqStageSaveCoef`,
+  `PeqStageSaveUiData`, `PeqStageSaveUiExtData`...). This is **exactly** the operation that the goal
+  forbids without command-by-command human approval. **Not implemented** — blocked by safety rule.
+- `PeqStageSetPeqGrpIdx` (0x0900, payload `00 00 <idx>`) only changes active PEQ group (reversible),
+  but depends on pre-saved groups and is coupled to the save-via-NVKey flow; no standalone value.
+- PersoniFi EQ (0x0071, from worker) is a separate personalized profile (not the app's band EQ).
+Summary: the only safe "EQ" would be switching an existing preset; band editing requires NVKey-write.
 
-## Lote 4 — mais toggles + submenu Recursos
-| Recurso | id | Payload | Builder | No tray |
+## Batch 4 — more toggles + Features submenu
+| Feature | id | Payload | Builder | In tray |
 |---|---|---|---|---|
-| Hi-Res audio | `0x0076` | `<tipo>` | `apply_hi_res` | — (lib; valores do tipo a confirmar) |
-| Ganho do mic | `0x0065` | `<ganho>` | `apply_mic_gain` | — (lib; faixa a confirmar) |
-| Áudio 3D | `0x0012` | `<onOff> <tipo>` | `apply_spatial_3d` | ✅ submenu Recursos |
-| Limitador | `0x0050` | `<onOff>` | `apply_audio_limiter` | ✅ submenu Recursos |
-| Chat Optimizer | `0x0052` | `<onOff>` | `apply_chat_optimizer` | ✅ submenu Recursos |
-- **Barrados (NVKey-write 0x0A01):** gesto, auto-standby, Multi-AI, coeficientes de EQ.
-- **Complexos/niche (fora por ora):** SmartSwitch (0x4353, key codes+bitrate), HotWord (frame de 9B).
+| Hi-Res audio | `0x0076` | `<type>` | `apply_hi_res` | — (lib; type values to confirm) |
+| Mic gain | `0x0065` | `<gain>` | `apply_mic_gain` | — (lib; range to confirm) |
+| 3D Audio | `0x0012` | `<onOff> <type>` | `apply_spatial_3d` | ✅ Features submenu |
+| Limiter | `0x0050` | `<onOff>` | `apply_audio_limiter` | ✅ Features submenu |
+| Chat Optimizer | `0x0052` | `<onOff>` | `apply_chat_optimizer` | ✅ Features submenu |
+- **Blocked (NVKey-write 0x0A01):** gesture, auto-standby, Multi-AI, EQ coefficients.
+- **Complex/niche (out for now):** SmartSwitch (0x4353, key codes+bitrate), HotWord (9B frame).
 
-## Lote 5 — GETs de estado (padrão de leitura, painel)
-0x0901 é multiplexado (ANC, VP, nível...) — o módulo no corpo distingue. parse_* filtra por módulo.
-| Estado | GET id | Requisição | Corpo da resposta | Parser |
+## Batch 5 — state GETs (read pattern, panel)
+0x0901 is multiplexed (ANC, VP, level...) — module in body distinguishes. parse_* filters by module.
+| State | GET id | Request | Response body | Parser |
 |---|---|---|---|---|
-| Avisos de voz | `0x0901` (mód 0x0001) | `05 5A 04 00 01 09 01 00` | `01 00 <status> <onOff>` | `parse_vp_status` → bool |
-No tray: linha "Avisos de voz: ligado/desligado" (atualizada a cada 30s). Mesmo padrão serve pros
-demais toggles (cada um com seu módulo/GET); implementado 1 como referência.
+| Voice prompts | `0x0901` (mod 0x0001) | `05 5A 04 00 01 09 01 00` | `01 00 <status> <onOff>` | `parse_vp_status` → bool |
+In tray: "Voice prompts: on/off" line (updated every 30s). Same pattern serves other toggles
+(each with its module/GET); implemented 1 as reference.
 
-## Lote 5b — GETs de estado + checkboxes (Recursos)
-GETs simples (requisição vazia, on/off no corpo índice 1; ids não multiplexados):
-| Estado | GET id | Parser |
+## Batch 5b — state GETs + checkboxes (Features)
+Simple GETs (empty request, on/off in body index 1; non-multiplexed ids):
+| State | GET id | Parser |
 |---|---|---|
-| Áudio 3D | `0x0013` | `parse_spatial_3d_status` |
-| Limitador | `0x0051` | `parse_audio_limiter_status` |
+| 3D Audio | `0x0013` | `parse_spatial_3d_status` |
+| Limiter | `0x0051` | `parse_audio_limiter_status` |
 | Chat Optimizer | `0x0053` | `parse_chat_optimizer_status` |
-No tray: submenu "Recursos" virou **CheckMenuItem** — o check reflete o estado lido (refresh 30s)
-e clicar alterna (envia o novo estado). Avisos de voz têm linha de estado própria (0x0901 mód 01).
+In tray: "Features" submenu became **CheckMenuItem** — check reflects read state (30s refresh)
+and click toggles (sends new state). Voice prompts have dedicated status line (0x0901 mod 01).
 
-## Lote 6 — mais recursos no tray (Hi-Res, Safe Sound, Balanço L/R)
-Checkboxes de estado (GET + SET), on/off. Valores finos (nível L/R, tipo Hi-Res) a confirmar no fone.
-| Recurso | SET | GET | on/off |
+## Batch 6 — more features in tray (Hi-Res, Safe Sound, L/R Balance)
+State checkboxes (GET + SET), on/off. Fine values (L/R level, Hi-Res type) to confirm on headset.
+| Feature | SET | GET | on/off |
 |---|---|---|---|
-| Hi-Res | `0x0076` `<tipo>` | `0x0075` | `apply_hi_res(on as u8)` / `parse_hi_res_status` |
-| Safe Sound | `0x0015` `<modo>` | `0x0014` | `apply_safe_sound(on as u8)` / `parse_safe_sound_status` |
-| Balanço L/R | `0x0036` `<on> <nível>` | `0x0037` | `apply_lr_balance(on, 0)` / `parse_lr_balance_status` |
-No tray: submenu Recursos agora tem 6 toggles. PSAP e Ganho do mic seguem só na lib (precisam faixa/índice).
+| Hi-Res | `0x0076` `<type>` | `0x0075` | `apply_hi_res(on as u8)` / `parse_hi_res_status` |
+| Safe Sound | `0x0015` `<mode>` | `0x0014` | `apply_safe_sound(on as u8)` / `parse_safe_sound_status` |
+| L/R Balance | `0x0036` `<on> <level>` | `0x0037` | `apply_lr_balance(on, 0)` / `parse_lr_balance_status` |
+In tray: Features submenu now has 6 toggles. PSAP and Mic Gain remain in lib only (need range/index).
 
-## Perfis de EQ (efeito de som) — REVERSÍVEL (não é NVKey!)
-Diferente do EQ de bandas (que grava NVKey 0x0A01 e fica barrado), os **perfis** usam
-`MmiStage_SetVoiceEqMode` — comando MMI reversível.
-| Ação | id | Payload | Builder |
+## EQ Profiles (sound effect) — REVERSIBLE (not NVKey!)
+Unlike band EQ (which writes NVKey 0x0A01 and is blocked), **profiles** use
+`MmiStage_SetVoiceEqMode` — reversible MMI command.
+| Action | id | Payload | Builder |
 |---|---|---|---|
-| Selecionar perfil | `0x2C82` (mód 0x13) | `13 00 <modo>` | `apply_eq_profile` |
-| Ler perfil atual | `0x2C83` (mód 0x13) | `13 00` → modo no índice 4 | `parse_eq_profile` |
-Modos: 5=Standard, 6=Treble Boost, 7=Bass Boost. No tray: submenu "Perfil de EQ" (rádio).
+| Select profile | `0x2C82` (mod 0x13) | `13 00 <mode>` | `apply_eq_profile` |
+| Read current profile | `0x2C83` (mod 0x13) | `13 00` → mode at index 4 | `parse_eq_profile` |
+Modes: 5=Standard, 6=Treble Boost, 7=Bass Boost. In tray: "EQ Profile" submenu (radio).

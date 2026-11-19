@@ -35,13 +35,13 @@ em um AKG N9 Hybrid (firmware 4.5.0) pelo dongle. `send_write` recusa qualquer i
 `ALLOWED_WRITE_IDS`. Ficam **fora do app**: escrita/apagamento de flash, FOTA, factory reset e escrita de
 NVKey (`0x0A01`), que é como o fone guarda gestos, auto-standby, Multi-AI e os coeficientes do EQ. O EQ de
 música também não é suportado (os coeficientes vêm de uma biblioteca nativa do app oficial); veja
-[docs/EQ-NOTES.md](docs/EQ-NOTES.md). **Use por sua conta e risco**: escrever configurações em um
+[docs/pt-BR/EQ-NOTES.md](docs/pt-BR/EQ-NOTES.md). **Use por sua conta e risco**: escrever configurações em um
 dispositivo pode mudar o comportamento dele.
 
 ## Documentação
-- [docs/FUNCTIONS.md](docs/FUNCTIONS.md): comandos mapeados e verificados (id, payload, classificação).
-- [docs/FUNCTIONS_full.md](docs/FUNCTIONS_full.md): índice dos 94 métodos do app (**não verificado**).
-- [docs/EQ-NOTES.md](docs/EQ-NOTES.md): por que o EQ de música não é suportado.
-- [docs/STATUS.md](docs/STATUS.md): estado do projeto.
+- [docs/pt-BR/FUNCTIONS.md](docs/pt-BR/FUNCTIONS.md): comandos mapeados e verificados (id, payload, classificação).
+- [docs/pt-BR/FUNCTIONS_full.md](docs/pt-BR/FUNCTIONS_full.md): índice dos 94 métodos do app (**não verificado**).
+- [docs/pt-BR/EQ-NOTES.md](docs/pt-BR/EQ-NOTES.md): por que o EQ de música não é suportado.
+- [docs/pt-BR/STATUS.md](docs/pt-BR/STATUS.md): estado do projeto.
 
 Licença: MIT.

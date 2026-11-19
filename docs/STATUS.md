@@ -1,42 +1,45 @@
-# Estado final do projeto AKG N9 Control
+# Final status of the AKG N9 Control project
 
-Data: 18/11/2026. Resumo do que foi entregue e do que fica como pendência humana.
+Portuguese version: [pt-BR/STATUS.md](pt-BR/STATUS.md)
 
-## Entregue (Fases 0–3)
-- **crate `akg-race`** — protocolo RACE sobre HID. Leituras + camada de **escrita reversível com
-  whitelist dura** de ids (só comandos reversíveis verificados passam; flash/FOTA/reset/shutdown e
-  escrita de NVKey `0x0A01` são recusados em `send_write`). **16 testes passando.**
-  - 14 builders de escrita, 9 parsers de leitura (GET), todos com payload **extraído e conferido no
-    `genRacePackets` do APK** (não inferido).
-- **crate `akg-tray`** — app de bandeja. Lê (a cada 30 s) bateria, firmware, modo/nível de ANC e o
-  estado dos recursos. Todo controle on/off é **CheckMenuItem** que reflete o estado real e alterna
-  ao clicar; modos de ANC, nível e presets de auto-desligar são checkboxes "rádio".
-  - Controla: ANC (desligado/ANC/TalkThru/Ambiente), nível 1–7, avisos de voz, speak-to-chat,
-    auto-desligar, achar fone (tocar/parar), Áudio 3D, Limitador, Chat Optimizer.
-- **FUNCTIONS.md** — tabela de todos os comandos mapeados (id, payload, classificação), a descoberta
-  do enable `01` nos modos de ANC, o mapa de filtro (01=ANC, 09=TalkThru, 0A=Ambient) e os GETs.
+Date: 11/18/2026. Summary of what was delivered and what remains pending human review.
 
-### Validado no hardware (via dongle, com app oficial)
-- ANC on/off e nível: round-trip com ack + readback `0x0901`. TalkThru/Ambiente: o usuário confirmou
-  que trocam o modo; o enable `01` foi a correção que faltava.
+## Delivered (Phases 0–3)
+- **crate `akg-race`** — RACE protocol over HID. Reads + **reversible write layer with strict id
+  whitelist** (only verified reversible commands pass; flash/FOTA/reset/shutdown and NVKey write
+  `0x0A01` are rejected in `send_write`). **16 passing tests.**
+  - 14 write builders, 9 read parsers (GET), all with payloads **extracted and verified from
+    `genRacePackets` in the APK** (not inferred).
+- **crate `akg-tray`** — tray app. Reads (every 30 s) battery, firmware, ANC mode/level, and feature
+  states. Every on/off control is a **CheckMenuItem** that reflects the actual state and toggles on
+  click; ANC modes, level, and auto-off presets are "radio" checkboxes.
+  - Controls: ANC (off/ANC/TalkThru/Ambient), level 1–7, voice prompts, speak-to-chat, auto power-off,
+    find my headphones (play/stop), 3D Audio, Limiter, Chat Optimizer.
+- **FUNCTIONS.md** — table of all mapped commands (id, payload, classification), discovery of the
+  `01` enable in ANC modes, the filter map (01=ANC, 09=TalkThru, 0A=Ambient), and GETs.
 
-## Fora de escopo por SEGURANÇA (não é falha — é a regra do goal)
-- **EQ de bandas (paramétrico): NÃO implementado.** O app salva os coeficientes via **escrita de
-  NVKey `0x0A01`** (`PeqStageSaveCoef`/`SaveUiData`...). A regra dura do goal proíbe escrita de NVKey
-  sem aprovação humana comando a comando. Logo o requisito "EQ" do tray e a regra de segurança são
-  **conflitantes**, e a segurança prevalece (como o próprio goal determina). Só trocar um preset já
-  gravado (`0x0900`) seria reversível, mas está acoplado ao fluxo de save via NVKey; sem valor isolado.
-- **Também barrados (NVKey-write `0x0A01`):** gestos, auto-standby, Multi-AI.
-- **Fase 4 (dump de firmware, RACE Toolkit da ERNW):** opcional; não executada.
+### Validated on hardware (via dongle, with official app)
+- ANC on/off and level: round-trip with ack + readback `0x0901`. TalkThru/Ambient: the owner confirmed
+  that they switch the mode; the `01` enable was the missing fix.
 
-## Pendências do usuário (combinado: "confere depois")
-1. **Revalidar no hardware** os lotes 2–5 (voz, auto-off, achar fone, speak-to-chat, 3D, limitador,
-   chat) e reconfirmar TalkThru/Ambiente após a correção do payload — nada disso foi revalidado no
-   fone depois das últimas mudanças, a pedido do usuário.
-2. Valores a confirmar no fone: tipo do Hi-Res, faixa do ganho de mic, modo do Safe Sound,
-   nível/índice do PSAP, tipo do Áudio 3D.
-3. Opcional: validar as demais leituras do `FUNCTIONS_full.md` enviando cada comando pelo USB.
+## Out of scope for SAFETY (not a failure — it is the goal rule)
+- **Band EQ (parametric): NOT implemented.** The app saves coefficients via **NVKey write `0x0A01`**
+  (`PeqStageSaveCoef`/`SaveUiData`...). The strict goal rule forbids NVKey writes without human
+  approval command-by-command. Therefore the tray's "EQ" requirement and the safety rule are in
+  **conflict**, and safety takes precedence (as required by the goal itself). Merely switching an
+  already stored preset (`0x0900`) would be reversible, but it is coupled to the save-via-NVKey flow;
+  no standalone value.
+- **Also blocked (NVKey-write `0x0A01`):** gestures, auto-standby, Multi-AI.
+- **Phase 4 (firmware dump, ERNW RACE Toolkit):** optional; not executed.
 
-## Commits principais
-Fase 3 (ANC) → write layer/whitelist → tray → correções de leitura → lotes 1–5 de recursos →
-GETs de estado → refatoração para toggles (CheckMenuItem). Ver `git log`.
+## Pending owner items (agreed: "check later")
+1. **Re-validate on hardware** batches 2–5 (voice, auto-off, find my headphones, speak-to-chat, 3D,
+   limiter, chat) and reconfirm TalkThru/Ambient after payload fix — none of this was re-validated on
+   the headset after the latest changes, at the owner's request.
+2. Values to confirm on the headset: Hi-Res type, mic gain range, Safe Sound mode, PSAP level/index,
+   3D Audio type.
+3. Optional: validate remaining readings from `FUNCTIONS_full.md` by sending each command over USB.
+
+## Main commits
+Phase 3 (ANC) → write layer/whitelist → tray → read fixes → feature batches 1–5 → state GETs →
+refactoring to toggles (CheckMenuItem). See `git log`.

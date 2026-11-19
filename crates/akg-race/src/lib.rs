@@ -23,25 +23,25 @@ pub mod id {
     pub const MODEL_ID: u16 = 0x000E;
     pub const NVKEY_READ: u16 = 0x0A00;
     pub const PARTITION_INFO: u16 = 0x1C00;
-    /// ANC control (MmiStage, 0x0E06): on/off, modo de escuta e nível.
+    /// ANC control (MmiStage, 0x0E06): on/off, listening mode, and level.
     pub const ANC_CONTROL: u16 = 0x0E06;
-    // --- outros recursos reversíveis (payloads verificados no APK) ---
+    // --- other reversible features (payloads verified in APK) ---
     pub const VOICE_PROMPT: u16 = 0x0900; // MmiStage_SetVpOnoff
     pub const SPATIAL_3D: u16 = 0x0012; // MmiStage_Set3DSpatialStatus
     pub const LR_BALANCE: u16 = 0x0036; // MmiStage_LRBalance_Set
     pub const AUDIO_LIMITER: u16 = 0x0050; // MmiStage_AudioLimiterStatus_Set
     pub const CHAT_OPTIMIZER: u16 = 0x0052; // MmiStage_SetChatOptimizerStatus
-    // --- toggles de fone (lote 3) ---
+    // --- headset toggles (batch 3) ---
     pub const SPEAK_TO_CHAT: u16 = 0x0061; // MmiStage_SmartTalkStatus_Set (= Speak-to-Chat)
     pub const PSAP: u16 = 0x0078; // MmiStage_SetPsapStatus
     pub const SAFE_SOUND: u16 = 0x0015; // MmiStage_SetSafeSoundStatus
-    pub const FIND_ME: u16 = 0x2C01; // MmiStageFindMe (RACE_FIND_ME) — toca som p/ achar o fone
+    pub const FIND_ME: u16 = 0x2C01; // MmiStageFindMe (RACE_FIND_ME) — plays sound to find the headset
     pub const AUTO_POWER_OFF: u16 = 0x2C82; // MmiStage_SetAutoPowerOffStatus (RACE_SET_MMI_COMMON_CONFIG)
     pub const HI_RES: u16 = 0x0076; // MmiStage_SetHiResAudioType
     pub const MIC_GAIN: u16 = 0x0065; // MmiStage_SetMicSettingGainLevel
     pub const LOW_VOL_EQ: u16 = 0x0059; // MmiStage_SetLowVolumeEqStatus
     pub const AUTO_PLAY_PAUSE: u16 = 0x000A; // MmiStage_IR_SetOnOff
-    // --- ids de LEITURA (GET) de estado (não vão na whitelist de escrita) ---
+    // --- state READ (GET) ids (do not go into write whitelist) ---
     pub const SPATIAL_3D_GET: u16 = 0x0013; // MmiStage_Get3DSpatialStatus
     pub const AUDIO_LIMITER_GET: u16 = 0x0051; // MmiStage_AudioLimiterStatus_Get
     pub const CHAT_OPTIMIZER_GET: u16 = 0x0053; // MmiStage_GetChatOptimizerStatus
@@ -51,7 +51,7 @@ pub mod id {
     pub const SAFE_SOUND_GET: u16 = 0x0014; // MmiStage_GetSafeSoundStatus
     pub const LR_BALANCE_GET: u16 = 0x0037; // MmiStage_LRBalance_Get
     pub const LOW_VOL_EQ_GET: u16 = 0x0058; // MmiStage_GetLowVolumeEqStatus
-    /// Enviar evento de tecla (MmiStageSendKeyEvent). Só o keycode de desligar é exposto (apply_shutdown).
+    /// Send key event (MmiStageSendKeyEvent). Only the power-off keycode is exposed (apply_shutdown).
     pub const SEND_KEY_EVENT: u16 = 0x1101;
 }
 
@@ -122,25 +122,25 @@ pub fn req_partition_info() -> [u8; REPORT_SIZE] {
     request(id::PARTITION_INFO, &[0x00])
 }
 
-// ---- reversible write layer (Fase 3, validada no hardware) ------------------------------------
+// ---- reversible write layer (Phase 3, validated on hardware) ------------------------------------
 //
-// SEGURANÇA: a única operação de escrita exposta é o controle de ANC (id 0x0E06), que é
-// reversível e foi validado no fone relendo 0x0901. Flash (0x0704/0707/0702), FOTA, factory
-// reset, shutdown e escrita de NVKey (0x0A01) NÃO são expressáveis aqui e são recusados em
-// tempo de execução por `is_allowed_write`. Todo write passa por `send_write` (ponto único).
+// SAFETY: the only exposed write operation is ANC control (id 0x0E06), which is
+// reversible and was validated on the headset by re-reading 0x0901. Flash (0x0704/0707/0702), FOTA, factory
+// reset, shutdown, and NVKey write (0x0A01) CANNOT be expressed here and are rejected at
+// runtime by `is_allowed_write`. Every write passes through `send_write` (single point).
 
-/// Mudança reversível de ANC sob o comando 0x0E06. Só o conjunto seguro: desligar, ou ligar
-/// com um filtro de escuta. Off usa a sub-op 0x0B; os demais, sub-op 0x0A + byte de filtro.
+/// Reversible ANC change under command 0x0E06. Only the safe set: turn off, or turn on
+/// with a listening filter. Off uses sub-op 0x0B; others use sub-op 0x0A + filter byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AncSet {
     Off,      // sub-op 0x0B
-    Anc,      // sub-op 0x0A, filtro 0x01
-    TalkThru, // sub-op 0x0A, filtro 0x09
-    Ambient,  // sub-op 0x0A, filtro 0x0A
+    Anc,      // sub-op 0x0A, filter 0x01
+    TalkThru, // sub-op 0x0A, filter 0x09
+    Ambient,  // sub-op 0x0A, filter 0x0A
 }
 
-/// Ids que `send_write` aceita. Whitelist dura: só comandos reversíveis verificados. Flash/FOTA/
-/// reset/shutdown e escrita de NVKey (0x0A01, usada por gesto/auto-standby) NÃO entram aqui.
+/// Ids that `send_write` accepts. Strict whitelist: only verified reversible commands. Flash/FOTA/
+/// reset/shutdown and NVKey write (0x0A01, used by gesture/auto-standby) do NOT enter here.
 pub const ALLOWED_WRITE_IDS: &[u16] = &[
     id::ANC_CONTROL,
     id::VOICE_PROMPT,
@@ -157,18 +157,18 @@ pub const ALLOWED_WRITE_IDS: &[u16] = &[
     id::MIC_GAIN,
     id::LOW_VOL_EQ,
     id::AUTO_PLAY_PAUSE,
-    id::SEND_KEY_EVENT, // só p/ apply_shutdown (keycode fixo de desligar); nenhum outro key event é exposto
+    id::SEND_KEY_EVENT, // only for apply_shutdown (fixed power-off keycode); no other key event is exposed
 ];
 
-/// Verdadeiro só para ids da whitelist reversível. Flash/FOTA/reset/NVKey-write nunca passam.
+/// True only for ids in the reversible whitelist. Flash/FOTA/reset/NVKey-write never pass.
 pub fn is_allowed_write(id: u16) -> bool {
     ALLOWED_WRITE_IDS.contains(&id)
 }
 
-/// Payload RACE para uma mudança de ANC (sem o enquadramento). Bytes extraídos do APK:
-/// `AncStageAncOff.genRacePackets` = `00 0B 01`; `AncStageAncOn.genRacePackets` = `00 0A <filtro> 00 01`.
-/// Filtro cru (igual ao lido em 0x0901): 01=ANC, 09=TalkThru, 0A=Ambient. O `01` final é o enable
-/// que faltava na 1ª tentativa (por isso TalkThru/Ambient só davam ack sem trocar o modo).
+/// RACE payload for an ANC change (without framing). Bytes extracted from APK:
+/// `AncStageAncOff.genRacePackets` = `00 0B 01`; `AncStageAncOn.genRacePackets` = `00 0A <filter> 00 01`.
+/// Raw filter (same as read in 0x0901): 01=ANC, 09=TalkThru, 0A=Ambient. The trailing `01` is the enable
+/// that was missing in the 1st attempt (which is why TalkThru/Ambient only acked without changing mode).
 pub fn anc_set_payload(set: AncSet) -> Vec<u8> {
     match set {
         AncSet::Off => vec![0x00, 0x0B, 0x01],
@@ -178,14 +178,14 @@ pub fn anc_set_payload(set: AncSet) -> Vec<u8> {
     }
 }
 
-/// Relatório HID para uma mudança reversível de ANC (comando 0x0E06). Para inspeção/testes;
-/// o envio ao fone deve ir por `apply_anc`/`send_write` para passar pela whitelist.
+/// HID report for a reversible ANC change (command 0x0E06). For inspection/testing;
+/// sending to the headset must go through `apply_anc`/`send_write` to pass through the whitelist.
 pub fn req_anc_set(set: AncSet) -> [u8; REPORT_SIZE] {
     request(id::ANC_CONTROL, &anc_set_payload(set))
 }
 
-/// Ponto ÚNICO de escrita: só envia se o id estiver na whitelist reversível; caso contrário
-/// recusa SEM tocar no dispositivo.
+/// SINGLE point of write: only sends if id is in the reversible whitelist; otherwise
+/// refuses WITHOUT touching the device.
 pub fn send_write<T: RaceTransport>(t: &T, id: u16, payload: &[u8]) -> std::io::Result<()> {
     if !is_allowed_write(id) {
         return Err(std::io::Error::new(
@@ -196,56 +196,56 @@ pub fn send_write<T: RaceTransport>(t: &T, id: u16, payload: &[u8]) -> std::io::
     t.send(&request(id, payload))
 }
 
-/// Aplica uma mudança reversível de ANC no fone, passando pela whitelist de escrita.
+/// Applies a reversible ANC change to the headset, passing through the write whitelist.
 pub fn apply_anc<T: RaceTransport>(t: &T, set: AncSet) -> std::io::Result<()> {
     send_write(t, id::ANC_CONTROL, &anc_set_payload(set))
 }
 
-/// Payload do nível de ANC/Ambiente (`MmiStage_SetAncAaLevel`, sub-op 0x1E): `00 1E <level LE16>`.
-/// Ajusta a intensidade do modo ativo (ANC ou Ambient). Faixa típica 1..=7.
+/// ANC/Ambient level payload (`MmiStage_SetAncAaLevel`, sub-op 0x1E): `00 1E <level LE16>`.
+/// Adjusts the intensity of the active mode (ANC or Ambient). Typical range 1..=7.
 pub fn anc_level_payload(level: u16) -> Vec<u8> {
     vec![0x00, 0x1E, (level & 0xFF) as u8, (level >> 8) as u8]
 }
 
-/// Relatório HID do comando de nível (inspeção/teste). Enviar via `apply_anc_level`.
+/// HID report for the level command (inspection/testing). Send via `apply_anc_level`.
 pub fn req_anc_level(level: u16) -> [u8; REPORT_SIZE] {
     request(id::ANC_CONTROL, &anc_level_payload(level))
 }
 
-/// Ajusta o nível do modo ativo (ANC/Ambient), passando pela whitelist.
+/// Adjusts the level of the active mode (ANC/Ambient), passing through the whitelist.
 pub fn apply_anc_level<T: RaceTransport>(t: &T, level: u16) -> std::io::Result<()> {
     send_write(t, id::ANC_CONTROL, &anc_level_payload(level))
 }
 
-// ---- outros recursos reversíveis (payloads verificados no genRacePackets do APK) --------------
+// ---- other reversible features (payloads verified in APK genRacePackets) --------------
 
-/// Avisos de voz on/off (`MmiStage_SetVpOnoff`, 0x0900): payload `01 00 <onOff>`.
+/// Voice prompts on/off (`MmiStage_SetVpOnoff`, 0x0900): payload `01 00 <onOff>`.
 pub fn apply_voice_prompt<T: RaceTransport>(t: &T, on: bool) -> std::io::Result<()> {
     send_write(t, id::VOICE_PROMPT, &[0x01, 0x00, on as u8])
 }
 
-/// Áudio espacial 3D on/off (`MmiStage_Set3DSpatialStatus`, 0x0012): payload `<onOff> <tipo>`.
+/// 3D spatial audio on/off (`MmiStage_Set3DSpatialStatus`, 0x0012): payload `<onOff> <kind>`.
 pub fn apply_spatial_3d<T: RaceTransport>(t: &T, on: bool, kind: u8) -> std::io::Result<()> {
     send_write(t, id::SPATIAL_3D, &[on as u8, kind])
 }
 
-/// Balanço L/R (`MmiStage_LRBalance_Set`, 0x0036): payload `<onOff> <nível>`.
+/// L/R balance (`MmiStage_LRBalance_Set`, 0x0036): payload `<onOff> <level>`.
 pub fn apply_lr_balance<T: RaceTransport>(t: &T, on: bool, level: u8) -> std::io::Result<()> {
     send_write(t, id::LR_BALANCE, &[on as u8, level])
 }
 
-/// Limitador de áudio on/off (`MmiStage_AudioLimiterStatus_Set`, 0x0050): payload `<onOff>`.
+/// Audio limiter on/off (`MmiStage_AudioLimiterStatus_Set`, 0x0050): payload `<onOff>`.
 pub fn apply_audio_limiter<T: RaceTransport>(t: &T, on: bool) -> std::io::Result<()> {
     send_write(t, id::AUDIO_LIMITER, &[on as u8])
 }
 
-/// Otimizador de chat on/off (`MmiStage_SetChatOptimizerStatus`, 0x0052): payload `<onOff>`.
+/// Chat optimizer on/off (`MmiStage_SetChatOptimizerStatus`, 0x0052): payload `<onOff>`.
 pub fn apply_chat_optimizer<T: RaceTransport>(t: &T, on: bool) -> std::io::Result<()> {
     send_write(t, id::CHAT_OPTIMIZER, &[on as u8])
 }
 
-/// Auto-desligamento (`MmiStage_SetAutoPowerOffStatus`, 0x2C82, MODULE_ID=1): payload
-/// `01 00 <en> 00 <timeout_min LE16>`. `enabled=false` = nunca desliga sozinho.
+/// Auto power-off (`MmiStage_SetAutoPowerOffStatus`, 0x2C82, MODULE_ID=1): payload
+/// `01 00 <en> 00 <timeout_min LE16>`. `enabled=false` = never powers off on its own.
 pub fn apply_auto_power_off<T: RaceTransport>(
     t: &T,
     enabled: bool,
@@ -254,68 +254,68 @@ pub fn apply_auto_power_off<T: RaceTransport>(
     send_write(
         t,
         id::AUTO_POWER_OFF,
-        // O fone espera SEGUNDOS (o app envia minutos*60). Converte aqui.
+        // The headset expects SECONDS (the app sends minutes*60). Converted here.
         &[0x01, 0x00, enabled as u8, 0x00,
           ((timeout_min as u32 * 60).min(0xFFFF) as u16 & 0xFF) as u8,
           ((timeout_min as u32 * 60).min(0xFFFF) as u16 >> 8) as u8],
     )
 }
 
-/// Toca (ou para) um som para localizar o fone (`MmiStageFindMe`, 0x2C01): payload
-/// `<blink> <ring> <target>`. Aqui: blink=0, ring=on, target=0 (ambos os lados).
+/// Plays (or stops) a sound to locate the headset (`MmiStageFindMe`, 0x2C01): payload
+/// `<blink> <ring> <target>`. Here: blink=0, ring=on, target=0 (both sides).
 pub fn apply_find_me<T: RaceTransport>(t: &T, ring: bool) -> std::io::Result<()> {
     send_write(t, id::FIND_ME, &[0x00, ring as u8, 0x00])
 }
 
 /// Speak-to-Chat / SmartTalk on/off (`MmiStage_SmartTalkStatus_Set`, 0x0061): payload
-/// `<onOff> <latency>`. Latência 0 = padrão.
+/// `<onOff> <latency>`. Latency 0 = default.
 pub fn apply_speak_to_chat<T: RaceTransport>(t: &T, on: bool, latency: u8) -> std::io::Result<()> {
     send_write(t, id::SPEAK_TO_CHAT, &[on as u8, latency])
 }
 
-/// PSAP (realce auditivo) (`MmiStage_SetPsapStatus`, 0x0078): payload `<onOff> <level> <index>`.
+/// PSAP (hearing enhancement) (`MmiStage_SetPsapStatus`, 0x0078): payload `<onOff> <level> <index>`.
 pub fn apply_psap<T: RaceTransport>(t: &T, on: bool, level: u8, index: u8) -> std::io::Result<()> {
     send_write(t, id::PSAP, &[on as u8, level, index])
 }
 
-/// Safe Sound / proteção auditiva (`MmiStage_SetSafeSoundStatus`, 0x0015): payload `<modo>`.
+/// Safe Sound / hearing protection (`MmiStage_SetSafeSoundStatus`, 0x0015): payload `<mode>`.
 pub fn apply_safe_sound<T: RaceTransport>(t: &T, mode: u8) -> std::io::Result<()> {
     send_write(t, id::SAFE_SOUND, &[mode])
 }
 
-/// EQ volume baixo on/off (`MmiStage_SetLowVolumeEqStatus`, 0x0059): payload `<onOff>`.
+/// Low-volume EQ on/off (`MmiStage_SetLowVolumeEqStatus`, 0x0059): payload `<onOff>`.
 pub fn apply_low_vol_eq<T: RaceTransport>(t: &T, on: bool) -> std::io::Result<()> {
     send_write(t, id::LOW_VOL_EQ, &[on as u8])
 }
 
-/// Desliga o fone (`MmiStageSendKeyEvent`, 0x1101, keycode power-off `{0x00,0x18}` → payload `18 00`).
-/// Ação benigna e reversível (liga de volta no botão); só é enviada quando o usuário clica.
-/// `doShutdownDevice` no APK: `bArr = {0, Ascii.CAN(0x18)}`; genRacePackets escreve `[1]` depois `[0]`.
+/// Powers off the headset (`MmiStageSendKeyEvent`, 0x1101, power-off keycode `{0x00,0x18}` → payload `18 00`).
+/// Benign and reversible action (turn back on with button); only sent when the owner clicks.
+/// `doShutdownDevice` in APK: `bArr = {0, Ascii.CAN(0x18)}`; genRacePackets writes `[1]` then `[0]`.
 pub fn apply_shutdown<T: RaceTransport>(t: &T) -> std::io::Result<()> {
     send_write(t, id::SEND_KEY_EVENT, &[0x18, 0x00])
 }
 
-/// Tipo de áudio Hi-Res (`MmiStage_SetHiResAudioType`, 0x0076): payload `<tipo>`.
+/// Hi-Res audio type (`MmiStage_SetHiResAudioType`, 0x0076): payload `<tipo>`.
 pub fn apply_hi_res<T: RaceTransport>(t: &T, kind: u8) -> std::io::Result<()> {
     send_write(t, id::HI_RES, &[kind])
 }
 
-/// Ganho do microfone (`MmiStage_SetMicSettingGainLevel`, 0x0065): payload `<ganho>`.
+/// Microphone gain (`MmiStage_SetMicSettingGainLevel`, 0x0065): payload `<ganho>`.
 pub fn apply_mic_gain<T: RaceTransport>(t: &T, gain: u8) -> std::io::Result<()> {
     send_write(t, id::MIC_GAIN, &[gain])
 }
 
-/// Pausa a música ao tirar o fone (`MmiStage_IR_SetOnOff`, 0x000A): payload `<onOff>`.
+/// Pauses music when removing the headset (`MmiStage_IR_SetOnOff`, 0x000A): payload `<onOff>`.
 pub fn apply_auto_play_pause<T: RaceTransport>(t: &T, on: bool) -> std::io::Result<()> {
     send_write(t, id::AUTO_PLAY_PAUSE, &[on as u8])
 }
 
-/// VoiceAware / Sidetone on/off (0x2C82, módulo 0x0007): payload `07 00 <onOff>`.
+/// VoiceAware / Sidetone on/off (0x2C82, module 0x0007): payload `07 00 <onOff>`.
 pub fn apply_voiceaware<T: RaceTransport>(t: &T, on: bool) -> std::io::Result<()> {
     send_write(t, id::AUTO_POWER_OFF, &[0x07, 0x00, on as u8])
 }
 
-/// Nível de VoiceAware (0x2C82, módulo 0x0006): payload `06 00 <level LE16>`.
+/// VoiceAware level (0x2C82, module 0x0006): payload `06 00 <level LE16>`.
 pub fn apply_voiceaware_level<T: RaceTransport>(t: &T, level: u16) -> std::io::Result<()> {
     send_write(
         t,
@@ -324,11 +324,11 @@ pub fn apply_voiceaware_level<T: RaceTransport>(t: &T, level: u16) -> std::io::R
     )
 }
 
-/// Ativa um grupo PEQ (PeqStageSetPeqGrpIdx, 0x0900, módulo 0x0000): payload `00 00 <index>`.
-/// Reversível, mas NÃO seleciona um preset de música sozinho: é só o passo final de "ativar grupo"
-/// do fluxo de EQ (sem carregar coeficientes, troca o grupo ativo — no N9 isso cai nas definições de
-/// modo chamada). O EQ de música de verdade exige o fluxo completo (coeficientes + save NVKey). Mantido
-/// para uso futuro nesse fluxo; não exposto no tray.
+/// Activates a PEQ group (PeqStageSetPeqGrpIdx, 0x0900, module 0x0000): payload `00 00 <index>`.
+/// Reversible, but does NOT select a music preset alone: it is only the final "activate group" step
+/// of the EQ flow (without loading coefficients, it switches the active group — on the N9 this affects
+/// call mode settings). Real music EQ requires the full flow (coefficients + NVKey save). Kept
+/// for future use in that flow; not exposed in the tray.
 pub fn apply_eq_group<T: RaceTransport>(t: &T, index: u8) -> std::io::Result<()> {
     send_write(t, id::VOICE_PROMPT, &[0x00, 0x00, index])
 }
@@ -354,10 +354,10 @@ pub fn find_reply<'a>(report: &'a [u8], want_id: u16) -> Option<&'a [u8]> {
             let end = (i + 4 + len).min(end_scan);
             if id == want_id && end > i + 6 {
                 let body = &report[i + 6..end];
-                // Prioridade: corpo mais longo (a bateria vem na indicação, que é maior); em caso
-                // de empate, prefere a RESPOSTA síncrona (0x5B) à indicação (0x5D) — assim a
-                // resposta atual ganha de uma indicação antiga presa no buffer do dongle (o que
-                // deixava o nível de ANC "preso" num valor velho).
+                // Priority: longest body (battery comes in the indication, which is larger); in case
+                // of a tie, prefers synchronous RESPONSE (0x5B) over indication (0x5D) — this way the
+                // current response beats an old indication stuck in the dongle buffer (which
+                // used to leave ANC level "stuck" on an old value).
                 let better = match best {
                     None => true,
                     Some(b) => body.len() > b.len() || (body.len() == b.len() && is_resp && !best_resp),
@@ -373,13 +373,13 @@ pub fn find_reply<'a>(report: &'a [u8], want_id: u16) -> Option<&'a [u8]> {
     best
 }
 
-/// Lê o estado dos avisos de voz (GET 0x0901, módulo 0x0001): requisição `01 00`.
+/// Reads voice prompts status (GET 0x0901, module 0x0001): request `01 00`.
 pub fn req_vp_status() -> [u8; REPORT_SIZE] {
     request(id::ANC_STATUS, &[0x01, 0x00])
 }
 
-/// Decodifica a resposta de `req_vp_status`. Como 0x0901 é multiplexado (ANC/VP/nível), filtra
-/// pelo módulo no corpo (`01 00`): corpo = `[01 00 <status> <onOff>]`. Retorna o on/off.
+/// Decodes the reply to `req_vp_status`. Since 0x0901 is multiplexed (ANC/VP/level), filters
+/// by module in body (`01 00`): body = `[01 00 <status> <onOff>]`. Returns on/off.
 pub fn parse_vp_status(report: &[u8]) -> Option<bool> {
     let end = report.len();
     let mut i = 3;
@@ -395,12 +395,12 @@ pub fn parse_vp_status(report: &[u8]) -> Option<bool> {
     None
 }
 
-/// Decodifica um GET simples de on/off: corpo `[<x> <onOff> …]`, on/off no índice 1 do corpo.
+/// Decodes a simple on/off GET: body `[<x> <onOff> …]`, on/off at body index 1.
 fn parse_onoff(report: &[u8], want_id: u16) -> Option<bool> {
     find_reply(report, want_id).and_then(|b| b.get(1)).map(|&v| v != 0)
 }
 
-/// GET do áudio 3D (0x0013): requisição vazia; `parse_spatial_3d_status` → on/off.
+/// 3D audio GET (0x0013): empty request; `parse_spatial_3d_status` → on/off.
 pub fn req_spatial_3d_status() -> [u8; REPORT_SIZE] {
     request(id::SPATIAL_3D_GET, &[])
 }
@@ -412,7 +412,7 @@ pub fn parse_spatial_3d_full(report: &[u8]) -> Option<(bool, u8)> {
     Some((*b.get(1)? != 0, *b.get(2)?))
 }
 
-/// GET do EQ volume baixo (0x0058): requisição vazia; `parse_low_vol_eq_status` → on/off.
+/// Low-volume EQ GET (0x0058): empty request; `parse_low_vol_eq_status` → on/off.
 pub fn req_low_vol_eq_status() -> [u8; REPORT_SIZE] {
     request(id::LOW_VOL_EQ_GET, &[])
 }
@@ -420,7 +420,7 @@ pub fn parse_low_vol_eq_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::LOW_VOL_EQ_GET)
 }
 
-/// GET do limitador de áudio (0x0051): requisição vazia; `parse_audio_limiter_status` → on/off.
+/// Audio limiter GET (0x0051): empty request; `parse_audio_limiter_status` → on/off.
 pub fn req_audio_limiter_status() -> [u8; REPORT_SIZE] {
     request(id::AUDIO_LIMITER_GET, &[])
 }
@@ -428,7 +428,7 @@ pub fn parse_audio_limiter_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::AUDIO_LIMITER_GET)
 }
 
-/// GET do chat optimizer (0x0053): requisição vazia; `parse_chat_optimizer_status` → on/off.
+/// Chat optimizer GET (0x0053): empty request; `parse_chat_optimizer_status` → on/off.
 pub fn req_chat_optimizer_status() -> [u8; REPORT_SIZE] {
     request(id::CHAT_OPTIMIZER_GET, &[])
 }
@@ -436,7 +436,7 @@ pub fn parse_chat_optimizer_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::CHAT_OPTIMIZER_GET)
 }
 
-/// GET do Speak-to-Chat / SmartTalk (0x0060): requisição vazia; on/off no índice 1 do corpo.
+/// Speak-to-Chat / SmartTalk GET (0x0060): empty request; on/off at body index 1.
 pub fn req_speak_to_chat_status() -> [u8; REPORT_SIZE] {
     request(id::SPEAK_TO_CHAT_GET, &[])
 }
@@ -444,7 +444,7 @@ pub fn parse_speak_to_chat_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::SPEAK_TO_CHAT_GET)
 }
 
-/// GET do Hi-Res (0x0075): on/off no índice 1 do corpo.
+/// Hi-Res GET (0x0075): on/off at body index 1.
 pub fn req_hi_res_status() -> [u8; REPORT_SIZE] {
     request(id::HI_RES_GET, &[])
 }
@@ -452,7 +452,7 @@ pub fn parse_hi_res_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::HI_RES_GET)
 }
 
-/// GET do Safe Sound (0x0014): on/off no índice 1 do corpo.
+/// Safe Sound GET (0x0014): on/off at body index 1.
 pub fn req_safe_sound_status() -> [u8; REPORT_SIZE] {
     request(id::SAFE_SOUND_GET, &[])
 }
@@ -460,7 +460,7 @@ pub fn parse_safe_sound_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::SAFE_SOUND_GET)
 }
 
-/// GET do balanço L/R (0x0037): isOn no índice 1 do corpo (nível no índice 2, ignorado aqui).
+/// L/R balance GET (0x0037): isOn at body index 1 (level at index 2, ignored here).
 pub fn req_lr_balance_status() -> [u8; REPORT_SIZE] {
     request(id::LR_BALANCE_GET, &[])
 }
@@ -468,29 +468,29 @@ pub fn parse_lr_balance_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::LR_BALANCE_GET)
 }
 
-/// GET do auto-desligamento (0x2C83, módulo 0x0001): requisição `01 00`. Corpo:
+/// Auto power-off GET (0x2C83, module 0x0001): request `01 00`. Body:
 /// `[<status> 01 00 <enabled> <?> <timeout_lo> <timeout_hi>]` → (enabled, timeout_min).
 pub fn req_auto_power_off_status() -> [u8; REPORT_SIZE] {
     request(id::AUTO_POWER_OFF_GET, &[0x01, 0x00])
 }
 pub fn parse_auto_power_off_status(report: &[u8]) -> Option<(bool, u16)> {
     let body = find_reply(report, id::AUTO_POWER_OFF_GET)?;
-    // body: [status, módulo_lo(01), módulo_hi(00), enabled, _, timeout_lo, timeout_hi]
+    // body: [status, module_lo(01), module_hi(00), enabled, _, timeout_lo, timeout_hi]
     if *body.get(1)? != 0x01 {
         return None;
     }
     let enabled = *body.get(3)? != 0;
-    // O fone responde em segundos; convertemos para minutos.
+    // Headset responds in seconds; converted to minutes.
     let timeout = (*body.get(5)? as u16 | ((*body.get(6)? as u16) << 8)) / 60;
     Some((enabled, timeout))
 }
 
-/// GET do VoiceAware estado (0x2C83, módulo 0x0007): requisição `07 00`.
+/// VoiceAware state GET (0x2C83, module 0x0007): request `07 00`.
 pub fn req_voiceaware_status() -> [u8; REPORT_SIZE] {
     request(id::AUTO_POWER_OFF_GET, &[0x07, 0x00])
 }
 
-/// Decodifica o estado do VoiceAware (0x2C83, módulo 0x0007). Corpo: `[status, 07, 00, <on>]`.
+/// Decodes VoiceAware state (0x2C83, module 0x0007). Body: `[status, 07, 00, <on>]`.
 pub fn parse_voiceaware_status(report: &[u8]) -> Option<bool> {
     let body = find_reply(report, id::AUTO_POWER_OFF_GET)?;
     if *body.get(1)? != 0x07 || *body.get(2)? != 0x00 {
@@ -499,12 +499,12 @@ pub fn parse_voiceaware_status(report: &[u8]) -> Option<bool> {
     Some(*body.get(3)? != 0)
 }
 
-/// GET do VoiceAware nível (0x2C83, módulo 0x0006): requisição `06 00`.
+/// VoiceAware level GET (0x2C83, module 0x0006): request `06 00`.
 pub fn req_voiceaware_level() -> [u8; REPORT_SIZE] {
     request(id::AUTO_POWER_OFF_GET, &[0x06, 0x00])
 }
 
-/// Decodifica o nível do VoiceAware (0x2C83, módulo 0x0006). Corpo: `[status, 06, 00, lvl_lo, lvl_hi]`.
+/// Decodes VoiceAware level (0x2C83, module 0x0006). Body: `[status, 06, 00, lvl_lo, lvl_hi]`.
 pub fn parse_voiceaware_level(report: &[u8]) -> Option<u16> {
     let body = find_reply(report, id::AUTO_POWER_OFF_GET)?;
     if *body.get(1)? != 0x06 || *body.get(2)? != 0x00 {
@@ -531,7 +531,8 @@ pub enum AncMode {
     Other(u8),
 }
 
-/// ANC filter + level (1..=7). Mapping verified no hardware: 0x00 off, 0x01 ANC, 0x09 TalkThru,
+/// ANC filter + level (1..=7). Mapping verified on hardware: 0x00 off, 0x01 ANC, 0x09 TalkThru,
+/// 0x0A Ambient Aware.
 /// 0x0A Ambient Aware.
 pub fn parse_anc(report: &[u8]) -> Option<(AncMode, u16)> {
     let body = find_reply(report, id::ANC_STATUS)?; // [modLo, modHi, status, filter, lvlLo, lvlHi]
@@ -662,7 +663,7 @@ mod tests {
         assert_eq!(&r[0..10], &[0x06, 0x07, 0x80, 0x05, 0x5A, 0x03, 0x00, 0xD6, 0x0C, 0x00]);
     }
 
-    /// Transporte de teste: registra o que foi enviado; `recv` devolve um frame fixo.
+    /// Test transport: records what was sent; `recv` returns a fixed frame.
     struct MockTx {
         sent: std::cell::RefCell<Vec<Vec<u8>>>,
     }
@@ -683,7 +684,7 @@ mod tests {
 
     #[test]
     fn anc_write_bytes_match_stage_code() {
-        // Pacotes exatamente como o app monta (AncStageAncOff/AncOn.genRacePackets no APK).
+        // Packets exactly as assembled by the app (AncStageAncOff/AncOn.genRacePackets in the APK).
         // Off: payload 00 0B 01 -> 05 5A 05 00 06 0E 00 0B 01
         assert_eq!(
             &req_anc_set(AncSet::Off)[0..12],
@@ -700,7 +701,7 @@ mod tests {
 
     #[test]
     fn anc_level_bytes() {
-        // MmiStage_SetAncAaLevel: 00 1E <level LE16> -> nivel 3 = 05 5A 06 00 06 0E 00 1E 03 00
+        // MmiStage_SetAncAaLevel: 00 1E <level LE16> -> level 3 = 05 5A 06 00 06 0E 00 1E 03 00
         assert_eq!(anc_level_payload(3), vec![0x00, 0x1E, 0x03, 0x00]);
         assert_eq!(
             &req_anc_level(3)[0..13],
@@ -736,7 +737,7 @@ mod tests {
 
     #[test]
     fn parse_spatial_3d_full_corpo() {
-        // corpo 00 01 02 -> on=true, type=2
+        // body 00 01 02 -> on=true, type=2
         let mut rep = [0u8; REPORT_SIZE];
         let b = [0x07u8, 0x09, 0x80, 0x05, 0x5B, 0x05, 0x00, 0x13, 0x00, 0x00, 0x01, 0x02];
         rep[..b.len()].copy_from_slice(&b);
@@ -794,20 +795,20 @@ mod tests {
     #[test]
     fn voiceaware_bytes_and_parse() {
         let tx = MockTx::new();
-        // SET estado on -> 05 5A 05 00 82 2C 07 00 01
+        // SET state on -> 05 5A 05 00 82 2C 07 00 01
         apply_voiceaware(&tx, true).unwrap();
         assert_eq!(
             &tx.sent.borrow()[0][3..12],
             &[0x05, 0x5A, 0x05, 0x00, 0x82, 0x2C, 0x07, 0x00, 0x01]
         );
-        // SET nível 3 -> 05 5A 06 00 82 2C 06 00 03 00
+        // SET level 3 -> 05 5A 06 00 82 2C 06 00 03 00
         apply_voiceaware_level(&tx, 3).unwrap();
         assert_eq!(
             &tx.sent.borrow()[1][3..13],
             &[0x05, 0x5A, 0x06, 0x00, 0x82, 0x2C, 0x06, 0x00, 0x03, 0x00]
         );
 
-        // GET estado: corpo [00 07 00 01] -> Some(true)
+        // GET state: body [00 07 00 01] -> Some(true)
         let mut rep_st = [0u8; REPORT_SIZE];
         let b_st = [
             0x07u8, 0x0A, 0x80, 0x05, 0x5B, 0x06, 0x00, 0x83, 0x2C, 0x00, 0x07, 0x00, 0x01,
@@ -815,7 +816,7 @@ mod tests {
         rep_st[..b_st.len()].copy_from_slice(&b_st);
         assert_eq!(parse_voiceaware_status(&rep_st), Some(true));
 
-        // GET nível: corpo [00 06 00 03 00] -> Some(3)
+        // GET level: body [00 06 00 03 00] -> Some(3)
         let mut rep_lvl = [0u8; REPORT_SIZE];
         let b_lvl = [
             0x07u8, 0x0B, 0x80, 0x05, 0x5B, 0x07, 0x00, 0x83, 0x2C, 0x00, 0x06, 0x00, 0x03, 0x00,
@@ -836,11 +837,11 @@ mod tests {
     #[test]
     fn send_write_refuses_without_touching_device() {
         let tx = MockTx::new();
-        // Id perigoso: deve retornar erro e NAO enviar nada.
+        // Dangerous id: must return error and NOT send anything.
         let err = send_write(&tx, 0x0A01, &[0xDE, 0xAD]).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         assert!(tx.sent.borrow().is_empty(), "nenhum write deveria ter sido enviado");
-        // Id reversivel: envia e bate com o pacote validado.
+        // Reversible id: sends and matches validated packet.
         apply_anc(&tx, AncSet::Off).unwrap();
         assert_eq!(tx.sent.borrow().len(), 1);
         assert_eq!(
@@ -870,13 +871,13 @@ mod tests {
 
     #[test]
     fn parse_battery_dongle_zero_validcount_prefers_indication() {
-        // Relatorio real do dongle: report[1]=0x00 (contagem nao cobre o frame), com uma resposta
-        // curta 05 5B 03 (sem porcentagem) ANTES da indicacao 05 5D 05 (com a porcentagem 0x64).
+        // Real dongle report: report[1]=0x00 (count does not cover frame), with a short
+        // response 05 5B 03 (without percentage) BEFORE indication 05 5D 05 (with percentage 0x64).
         let mut rep = [0u8; REPORT_SIZE];
         let bytes = [
             0x07u8, 0x00, 0x80, 0x54, 0x3F, 0x20, 0x04, 0x54, 0x00, 0x00, 0x01, 0xFF, 0xFF, //
-            0x05, 0x5B, 0x03, 0x00, 0xD6, 0x0C, 0x00, // resposta curta, body [00]
-            0x05, 0x5D, 0x05, 0x00, 0xD6, 0x0C, 0x00, 0x00, 0x64, // indicacao, body [00 00 64]
+            0x05, 0x5B, 0x03, 0x00, 0xD6, 0x0C, 0x00, // short response, body [00]
+            0x05, 0x5D, 0x05, 0x00, 0xD6, 0x0C, 0x00, 0x00, 0x64, // indication, body [00 00 64]
         ];
         rep[..bytes.len()].copy_from_slice(&bytes);
         assert_eq!(parse_battery(&rep), Some(0x64));
@@ -884,7 +885,7 @@ mod tests {
 
     #[test]
     fn parse_autooff_status() {
-        // 0x2C83 corpo: status 01 00 <en=01> 00 <to=600s LE = 58 02> -> (true, 10 min)
+        // 0x2C83 body: status 01 00 <en=01> 00 <to=600s LE = 58 02> -> (true, 10 min)
         let mut rep = [0u8; REPORT_SIZE];
         let b = [
             0x07u8, 0x0D, 0x80, 0x05, 0x5B, 0x09, 0x00, 0x83, 0x2C, 0x00, 0x01, 0x00, 0x01, 0x00,
@@ -892,7 +893,7 @@ mod tests {
         ];
         rep[..b.len()].copy_from_slice(&b);
         assert_eq!(parse_auto_power_off_status(&rep), Some((true, 10)));
-        // apply: 10 min -> 600 s (58 02) no payload
+        // apply: 10 min -> 600 s (58 02) in payload
         let tx = MockTx::new();
         apply_auto_power_off(&tx, true, 10).unwrap();
         assert_eq!(
@@ -903,12 +904,12 @@ mod tests {
 
     #[test]
     fn parse_onoff_gets() {
-        // 3D (0x0013) ligado: 05 5B 04 00 13 00 <x=00> <onOff=01>
+        // 3D (0x0013) on: 05 5B 04 00 13 00 <x=00> <onOff=01>
         let mut rep = [0u8; REPORT_SIZE];
         let b = [0x07u8, 0x08, 0x80, 0x05, 0x5B, 0x04, 0x00, 0x13, 0x00, 0x00, 0x01];
         rep[..b.len()].copy_from_slice(&b);
         assert_eq!(parse_spatial_3d_status(&rep), Some(true));
-        // limiter (0x0051) desligado
+        // limiter (0x0051) off
         let mut rep2 = [0u8; REPORT_SIZE];
         let b2 = [0x07u8, 0x08, 0x80, 0x05, 0x5B, 0x04, 0x00, 0x51, 0x00, 0x00, 0x00];
         rep2[..b2.len()].copy_from_slice(&b2);
@@ -917,14 +918,14 @@ mod tests {
 
     #[test]
     fn parse_vp_on() {
-        // frame 0x0901 modulo 01: 05 5B 06 00 01 09 01 00 00 01 -> onOff = 1 (ligado)
+        // frame 0x0901 module 01: 05 5B 06 00 01 09 01 00 00 01 -> onOff = 1 (on)
         let mut rep = [0u8; REPORT_SIZE];
         let bytes = [
             0x07u8, 0x0A, 0x80, 0x05, 0x5B, 0x06, 0x00, 0x01, 0x09, 0x01, 0x00, 0x00, 0x01,
         ];
         rep[..bytes.len()].copy_from_slice(&bytes);
         assert_eq!(parse_vp_status(&rep), Some(true));
-        // garante que nao confunde com o frame ANC (modulo 05)
+        // ensures it is not confused with ANC frame (module 05)
         let mut anc = [0u8; REPORT_SIZE];
         let ab = [
             0x07u8, 0x0C, 0x80, 0x05, 0x5B, 0x08, 0x00, 0x01, 0x09, 0x05, 0x00, 0x00, 0x01, 0x01,
@@ -936,13 +937,13 @@ mod tests {
 
     #[test]
     fn parse_anc_prefers_resp_over_stale_ind() {
-        // Buffer do dongle com indicação velha (5D, nível 1) ANTES da resposta atual (5B, nível 6).
-        // parse_anc deve devolver o nível 6 (a resposta síncrona), não o 1 da indicação presa.
+        // Dongle buffer with stale indication (5D, level 1) BEFORE current response (5B, level 6).
+        // parse_anc must return level 6 (synchronous response), not 1 from stuck indication.
         let mut rep = [0u8; REPORT_SIZE];
         let bytes = [
             0x07u8, 0x00, 0x80, //
-            0x05, 0x5D, 0x08, 0x00, 0x01, 0x09, 0x05, 0x00, 0x00, 0x01, 0x01, 0x00, // IND nível 1
-            0x05, 0x5B, 0x08, 0x00, 0x01, 0x09, 0x05, 0x00, 0x00, 0x01, 0x06, 0x00, // RESP nível 6
+            0x05, 0x5D, 0x08, 0x00, 0x01, 0x09, 0x05, 0x00, 0x00, 0x01, 0x01, 0x00, // IND level 1
+            0x05, 0x5B, 0x08, 0x00, 0x01, 0x09, 0x05, 0x00, 0x00, 0x01, 0x06, 0x00, // RESP level 6
         ];
         rep[..bytes.len()].copy_from_slice(&bytes);
         assert_eq!(parse_anc(&rep), Some((AncMode::Anc, 6)));
@@ -950,7 +951,7 @@ mod tests {
 
     #[test]
     fn parse_talkthru_filter_09() {
-        // body ANC: [05 00 00 09 00 00] -> filtro 0x09 = TalkThru
+        // body ANC: [05 00 00 09 00 00] -> filter 0x09 = TalkThru
         let mut rep = [0u8; REPORT_SIZE];
         let bytes = [
             0x07u8, 0x0C, 0x80, 0x05, 0x5B, 0x08, 0x00, 0x01, 0x09, 0x05, 0x00, 0x00, 0x09, 0x00,

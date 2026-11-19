@@ -1,13 +1,13 @@
-//! Hook de teclado de baixo nível (WH_KEYBOARD_LL) usado SÓ enquanto o "Achar fone" está tocando.
+//! Low-level keyboard hook (WH_KEYBOARD_LL) used ONLY while "Find my headphones" is ringing.
 //!
-//! O dongle expõe um dispositivo HID de controle de mídia, então o botão play do fone chega ao
-//! Windows como a tecla Play/Pause. Enquanto o hook existe ele: (1) sinaliza que a tecla foi
-//! apertada e (2) engole a tecla (para o player de música não começar a tocar junto).
-//! Ele olha apenas o código da tecla Play/Pause; nada é lido, guardado ou enviado. Ao soltar o
-//! `PlayStopHook` (Drop) o hook é removido e a tecla volta ao comportamento normal.
+//! The dongle exposes a media control HID device, so the headset play button reaches
+//! Windows as the Play/Pause key. While the hook is active it: (1) signals that the key was
+//! pressed and (2) swallows the key (so the music player does not start playing along).
+//! It only checks the Play/Pause key code; nothing is read, stored, or sent. When dropping
+//! `PlayStopHook` (Drop) the hook is removed and the key reverts to its normal behavior.
 //!
-//! O callback roda na thread que instalou o hook, durante o bombeamento de mensagens do event
-//! loop; por isso o loop não faz leituras demoradas enquanto o hook está ativo.
+//! The callback runs on the thread that installed the hook, during the event loop message
+//! pumping; therefore the loop does not perform slow reads while the hook is active.
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static PLAY_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -46,17 +46,17 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
             if wparam == WM_KEYDOWN {
                 PLAY_PRESSED.store(true, Ordering::SeqCst);
             }
-            return 1; // engole a tecla (down e up) enquanto o hook existe
+            return 1; // swallow the key (down and up) while the hook exists
         }
     }
     CallNextHookEx(0, code, wparam, lparam)
 }
 
-/// Dono do hook: instalar no começo do "tocar", soltar (Drop) ao parar.
+/// Owner of the hook: install at the start of "ringing", drop upon stopping.
 pub struct PlayStopHook(isize);
 
 impl PlayStopHook {
-    /// Instala o hook; `None` se o Windows recusar (aí o "achar fone" segue sem o atalho do play).
+    /// Installs the hook; `None` if Windows refuses (then "find my headphones" proceeds without the play shortcut).
     pub fn install() -> Option<Self> {
         PLAY_PRESSED.store(false, Ordering::SeqCst);
         let h = unsafe {
@@ -69,7 +69,7 @@ impl PlayStopHook {
         }
     }
 
-    /// True (uma vez) se o Play/Pause foi apertado desde a última checagem.
+    /// True (once) if Play/Pause was pressed since the last check.
     pub fn take_pressed(&self) -> bool {
         PLAY_PRESSED.swap(false, Ordering::SeqCst)
     }
@@ -89,11 +89,11 @@ mod tests {
 
     #[test]
     fn instala_e_solta_o_hook() {
-        // Numa sessão com desktop o hook instala; ao soltar (Drop) é removido. Nada é apertado aqui.
+        // In a desktop session the hook installs; upon drop it is removed. Nothing is pressed here.
         if let Some(h) = PlayStopHook::install() {
             assert!(!h.take_pressed());
         }
-        // Depois de soltar, instalar de novo tem que funcionar (prova que o anterior foi removido).
+        // After dropping, installing again must succeed (proves that the previous one was removed).
         let h2 = PlayStopHook::install();
         drop(h2);
     }
