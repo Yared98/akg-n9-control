@@ -1,0 +1,17 @@
+[package]
+name = "akg-tray"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Windows tray app to monitor the AKG N9 Hybrid (read-only)."
+
+[[bin]]
+name = "akg-tray"
+path = "src/main.rs"
+
+[dependencies]
+akg-race = { path = "../akg-race", features = ["hid"] }
+tray-icon = "0.19"
+tao = "0.30"
+tauri-winrt-notification = "0.8.1"

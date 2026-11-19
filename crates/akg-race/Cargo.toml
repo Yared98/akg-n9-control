@@ -1,0 +1,16 @@
+[package]
+name = "akg-race"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Airoha RACE protocol over HID for the AKG N9 Hybrid (read-only core)."
+
+[features]
+# The pure protocol (framing + parsers) builds and tests without any device.
+# Enable `hid` to talk to real hardware through hidapi.
+default = []
+hid = ["dep:hidapi"]
+
+[dependencies]
+hidapi = { version = "2.6.3", optional = true }

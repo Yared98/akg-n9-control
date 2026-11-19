@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+TASK-*.md
+
+# nao publicar: identificadores do aparelho e plano interno do agente
+nvkeys_headset.csv
+GOAL.md
+*.log
