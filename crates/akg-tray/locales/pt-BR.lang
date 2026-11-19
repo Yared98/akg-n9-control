@@ -81,7 +81,6 @@ menu.autostart = Iniciar com o Windows
 menu.notifications = Notificações
 menu.notify_connection = Avisos de conexão
 menu.pause_on_disconnect = Pausar mídia ao desconectar o fone
-menu.hotkeys = Atalhos globais
 menu.language = Idioma
 menu.power_off = Desligar o fone
 menu.quit = Sair

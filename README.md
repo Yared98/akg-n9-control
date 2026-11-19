@@ -20,11 +20,10 @@ USB-C port (`0ECB:20D8`). No vendor software needed.
   Spatial sound (Movie/Music/Game), voice prompts, Speak-to-Chat, VoiceAware (and level), pause on
   removal, auto power-off, limiter, Chat Optimizer, Hi-Res, Safe Sound, low-volume EQ, L/R balance,
   find my headphones (plays a sound; **stops when you press play on the headset**) and power off.
-- **Global shortcuts**: `Ctrl+Alt+N` cycles ANC modes, `Ctrl+Alt+T` toggles TalkThru, `Ctrl+Alt+F` rings find my headphones, and `Ctrl+Alt+Left` / `Ctrl+Alt+Right` / `Ctrl+Alt+Down` adjust L/R balance.
 - **Diagnostics**: serial, chip and firmware (read-only).
 
 ## App menu
-The **App** menu lets you configure Windows autostart, connection alerts (toast notification on connect/disconnect), automatic media pausing when the headset disconnects, global keyboard shortcuts, and the interface language.
+The **App** menu lets you configure Windows autostart, connection alerts (toast notification on connect/disconnect), automatic media pausing when the headset disconnects, and the interface language.
 
 ## Build, test and run
     cargo test                 # protocol + parsers (no headset needed)

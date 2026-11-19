@@ -81,7 +81,6 @@ menu.autostart = Start with Windows
 menu.notifications = Notifications
 menu.notify_connection = Connection alerts
 menu.pause_on_disconnect = Pause media when headset disconnects
-menu.hotkeys = Global shortcuts
 menu.language = Language
 menu.power_off = Power off headset
 menu.quit = Quit

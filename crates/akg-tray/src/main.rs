@@ -18,8 +18,6 @@ mod settings;
 use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
-use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use i18n::{available, save_lang, I18n, LangInfo};
 use mediakey::PlayStopHook;
 
@@ -461,7 +459,6 @@ struct Ui {
     submenu_notif: Submenu,
     mi_notify_conn: CheckMenuItem,
     mi_pause_disconnect: CheckMenuItem,
-    mi_hotkeys: CheckMenuItem,
 
     // Language selector — radio checkboxes (inside App submenu).
     submenu_lang: Submenu,
@@ -642,12 +639,6 @@ impl Ui {
             settings::get_bool("pause_on_disconnect", false),
             None,
         );
-        let mi_hotkeys = CheckMenuItem::new(
-            i18n.t("menu.hotkeys"),
-            true,
-            settings::get_bool("hotkeys", false),
-            None,
-        );
 
         let submenu_app = Submenu::new(i18n.t("menu.app"), true);
         submenu_app
@@ -655,7 +646,6 @@ impl Ui {
                 &mi_autostart,
                 &submenu_notif,
                 &mi_pause_disconnect,
-                &mi_hotkeys,
                 &PredefinedMenuItem::separator(),
                 &submenu_lang,
             ])
@@ -753,7 +743,6 @@ impl Ui {
                 submenu_notif,
                 mi_notify_conn,
                 mi_pause_disconnect,
-                mi_hotkeys,
                 submenu_lang,
                 lang_items,
                 mi_shutdown,
@@ -822,7 +811,6 @@ impl Ui {
         self.submenu_notif.set_text(i18n.t("menu.notifications"));
         self.mi_notify_conn.set_text(i18n.t("menu.notify_connection"));
         self.mi_pause_disconnect.set_text(i18n.t("menu.pause_on_disconnect"));
-        self.mi_hotkeys.set_text(i18n.t("menu.hotkeys"));
 
         self.submenu_lang.set_text(i18n.t("menu.language"));
 
@@ -955,8 +943,6 @@ impl Ui {
             .set_checked(settings::get_bool("notify_connection", true));
         self.mi_pause_disconnect
             .set_checked(settings::get_bool("pause_on_disconnect", false));
-        self.mi_hotkeys
-            .set_checked(settings::get_bool("hotkeys", false));
 
         // Language radio check
         self.update_lang_checks(i18n.code());
@@ -997,27 +983,6 @@ fn main() {
 
     let menu_rx = MenuEvent::receiver();
     let _tray_rx = TrayIconEvent::receiver();
-
-    // Global hotkey manager and shortcuts.
-    let hotkey_manager = GlobalHotKeyManager::new().ok();
-    let hk_n = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyN);
-    let hk_t = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyT);
-    let hk_f = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyF);
-    let hk_left = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::ArrowLeft);
-    let hk_right = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::ArrowRight);
-    let hk_down = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::ArrowDown);
-    let hotkey_rx = GlobalHotKeyEvent::receiver();
-
-    if settings::get_bool("hotkeys", false) {
-        if let Some(mgr) = &hotkey_manager {
-            let _ = mgr.register(hk_n);
-            let _ = mgr.register(hk_t);
-            let _ = mgr.register(hk_f);
-            let _ = mgr.register(hk_left);
-            let _ = mgr.register(hk_right);
-            let _ = mgr.register(hk_down);
-        }
-    }
 
     // Battery notification hysteresis: alerts <=15%, rearms >=25%.
     let low_notified = Cell::new(false);
@@ -1117,77 +1082,6 @@ fn main() {
                 }
             }
             _ => {}
-        }
-
-        // Global hotkey events
-        if let Ok(ev) = hotkey_rx.try_recv() {
-            if ev.state == HotKeyState::Pressed {
-                if ev.id == hk_n.id {
-                    // Cycle ANC mode: Off -> ANC -> TalkThru -> Ambient -> Off
-                    let cur = last_status.borrow().anc.map(|(m, _)| m);
-                    let next = match cur {
-                        Some(AncMode::Off) => AncSet::Anc,
-                        Some(AncMode::Anc) => AncSet::TalkThru,
-                        Some(AncMode::TalkThru) => AncSet::Ambient,
-                        Some(AncMode::Ambient) => AncSet::Off,
-                        _ => AncSet::Off,
-                    };
-                    apply(next);
-                    refresh(
-                        &last_status,
-                        &i18n,
-                        &ui,
-                        &tray,
-                        &low_notified,
-                        &last_linked,
-                    );
-                } else if ev.id == hk_t.id {
-                    // Toggle TalkThru: if TalkThru -> ANC else TalkThru
-                    let cur = last_status.borrow().anc.map(|(m, _)| m);
-                    let next = if cur == Some(AncMode::TalkThru) {
-                        AncSet::Anc
-                    } else {
-                        AncSet::TalkThru
-                    };
-                    apply(next);
-                    refresh(
-                        &last_status,
-                        &i18n,
-                        &ui,
-                        &tray,
-                        &low_notified,
-                        &last_linked,
-                    );
-                } else if ev.id == hk_f.id {
-                    // Toggle Find headphones
-                    if ringing.is_some() {
-                        apply_findme(false);
-                        ui.mi_find.set_checked(false);
-                        ringing = None;
-                    } else {
-                        ui.mi_find.set_checked(true);
-                        apply_findme(true);
-                        ringing = Some((Instant::now(), PlayStopHook::install()));
-                    }
-                } else if ev.id == hk_left.id {
-                    let cur = last_status.borrow().lr_level.unwrap_or(0);
-                    let step = (cur - 2).clamp(-16, 16);
-                    apply_lr(step);
-                    last_status.borrow_mut().lr_level = Some(step);
-                    balance::set_step(step);
-                } else if ev.id == hk_right.id {
-                    let cur = last_status.borrow().lr_level.unwrap_or(0);
-                    let step = (cur + 2).clamp(-16, 16);
-                    apply_lr(step);
-                    last_status.borrow_mut().lr_level = Some(step);
-                    balance::set_step(step);
-                } else if ev.id == hk_down.id {
-                    let step = 0;
-                    apply_lr(step);
-                    last_status.borrow_mut().lr_level = Some(step);
-                    balance::set_step(step);
-                }
-            }
         }
 
         if let Ok(ev) = menu_rx.try_recv() {
@@ -1352,26 +1246,6 @@ fn main() {
                     "pause_on_disconnect",
                     &ui.mi_pause_disconnect.is_checked().to_string(),
                 );
-            } else if ev.id == ui.mi_hotkeys.id() {
-                let enabled = ui.mi_hotkeys.is_checked();
-                settings::set("hotkeys", &enabled.to_string());
-                if let Some(mgr) = &hotkey_manager {
-                    if enabled {
-                        let _ = mgr.register(hk_n);
-                        let _ = mgr.register(hk_t);
-                        let _ = mgr.register(hk_f);
-                        let _ = mgr.register(hk_left);
-                        let _ = mgr.register(hk_right);
-                        let _ = mgr.register(hk_down);
-                    } else {
-                        let _ = mgr.unregister(hk_n);
-                        let _ = mgr.unregister(hk_t);
-                        let _ = mgr.unregister(hk_f);
-                        let _ = mgr.unregister(hk_left);
-                        let _ = mgr.unregister(hk_right);
-                        let _ = mgr.unregister(hk_down);
-                    }
-                }
             } else if let Some((code, _)) = ui.lang_items.iter().find(|(_, it)| it.id() == &ev.id) {
                 let code = code.clone();
                 i18n = I18n::new(&code);
