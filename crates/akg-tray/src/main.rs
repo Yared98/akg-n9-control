@@ -233,10 +233,48 @@ fn apply_ss(on: bool) {
         let _ = apply_safe_sound(&dev, on as u8);
     }
 }
+/// Queue for balance writes. Opening the HID device enumerates every HID device on the machine
+/// (tens to hundreds of ms), which made the slider stutter when done on the UI thread for each
+/// move. A background thread keeps one handle open, always writes only the newest pending value,
+/// and drops the handle after a few idle seconds so the headset is not held open.
+fn balance_queue() -> &'static std::sync::mpsc::Sender<i8> {
+    static TX: std::sync::OnceLock<std::sync::mpsc::Sender<i8>> = std::sync::OnceLock::new();
+    TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<i8>();
+        std::thread::spawn(move || {
+            let mut dev: Option<HidRace> = None;
+            loop {
+                let mut step = match rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(s) => s,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        dev = None; // idle: release the device
+                        match rx.recv() {
+                            Ok(s) => s,
+                            Err(_) => return,
+                        }
+                    }
+                    Err(_) => return,
+                };
+                while let Ok(newer) = rx.try_recv() {
+                    step = newer; // coalesce: only the latest value matters
+                }
+                for _attempt in 0..2 {
+                    if dev.is_none() {
+                        dev = HidRace::open().ok();
+                    }
+                    match &dev {
+                        Some(d) if apply_lr_balance(d, step).is_ok() => break,
+                        _ => dev = None, // stale handle (e.g. replugged): reopen once
+                    }
+                }
+            }
+        });
+        tx
+    })
+}
+
 fn apply_lr(step: i8) {
-    if let Ok(dev) = HidRace::open() {
-        let _ = apply_lr_balance(&dev, step);
-    }
+    let _ = balance_queue().send(step);
 }
 fn apply_loweq(on: bool) {
     if let Ok(dev) = HidRace::open() {
