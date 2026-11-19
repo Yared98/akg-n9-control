@@ -183,11 +183,19 @@ fn read_status() -> Status {
 
 /// Short poll: opens the device, queries battery, and returns true if linked.
 fn read_link() -> bool {
-    let dev = match HidRace::open() {
-        Ok(d) => d,
-        Err(_) => return false,
-    };
-    query(&dev, &req_battery(), parse_battery).is_some()
+    // A single missed reply must not look like a disconnect (it would toast and pause the music):
+    // only report "not linked" after a second attempt also fails.
+    for attempt in 0..2 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(800));
+        }
+        if let Ok(dev) = HidRace::open() {
+            if query(&dev, &req_battery(), parse_battery).is_some() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ---- write helpers (open connection on the fly; connection failure is silent) --------------

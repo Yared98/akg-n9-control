@@ -229,9 +229,18 @@ pub fn apply_spatial_3d<T: RaceTransport>(t: &T, on: bool, kind: u8) -> std::io:
     send_write(t, id::SPATIAL_3D, &[on as u8, kind])
 }
 
-/// L/R balance (`MmiStage_LRBalance_Set`, 0x0036): payload `<onOff> <level>`.
-pub fn apply_lr_balance<T: RaceTransport>(t: &T, on: bool, level: u8) -> std::io::Result<()> {
-    send_write(t, id::LR_BALANCE, &[on as u8, level])
+/// Centre of the L/R balance scale on the wire: payload is a big-endian u16 = `LR_CENTER + step`.
+pub const LR_CENTER: u16 = 356;
+/// Balance steps range from `-LR_MAX` (full left) to `+LR_MAX` (full right).
+pub const LR_MAX: i8 = 16;
+
+/// L/R balance (`MmiStage_LRBalance_Set`, 0x0036), step -16 (left) ..= +16 (right), 0 = centre.
+/// Verified against the official app: -16 -> `01 54`, +16 -> `01 74`, -8 -> `01 5C`.
+/// Values outside the scale are rejected by the headset (status FF), so the step is clamped.
+pub fn apply_lr_balance<T: RaceTransport>(t: &T, step: i8) -> std::io::Result<()> {
+    let step = step.clamp(-LR_MAX, LR_MAX);
+    let v = (LR_CENTER as i32 + step as i32) as u16;
+    send_write(t, id::LR_BALANCE, &v.to_be_bytes())
 }
 
 /// Audio limiter on/off (`MmiStage_AudioLimiterStatus_Set`, 0x0050): payload `<onOff>`.
@@ -467,11 +476,20 @@ pub fn req_lr_balance_status() -> [u8; REPORT_SIZE] {
 pub fn parse_lr_balance_status(report: &[u8]) -> Option<bool> {
     parse_onoff(report, id::LR_BALANCE_GET)
 }
-/// L/R balance GET body: `[status, onOff, level]` -> (on, raw level byte). Meaning of the level
-/// (sign/side) is decided by the caller; a headset with balance off returns level 0.
-pub fn parse_lr_balance_full(report: &[u8]) -> Option<(bool, u8)> {
+/// L/R balance GET body: `[status, hi, lo]` -> step -16..=16 (0 = centre). A headset that was never
+/// set returns `00 00`, which we also report as centre. Anything else is `None`.
+pub fn parse_lr_balance_full(report: &[u8]) -> Option<i8> {
     let b = find_reply(report, id::LR_BALANCE_GET)?;
-    Some((*b.get(1)? != 0, *b.get(2)?))
+    let v = u16::from_be_bytes([*b.get(1)?, *b.get(2)?]);
+    if v == 0 {
+        return Some(0);
+    }
+    let step = v as i32 - LR_CENTER as i32;
+    if step.abs() <= LR_MAX as i32 {
+        Some(step as i8)
+    } else {
+        None
+    }
 }
 
 /// Auto power-off GET (0x2C83, module 0x0001): request `01 00`. Body:
@@ -719,13 +737,13 @@ mod tests {
     fn feature_writes_go_through_whitelist_with_right_bytes() {
         let tx = MockTx::new();
         apply_voice_prompt(&tx, true).unwrap();
-        apply_lr_balance(&tx, true, 5).unwrap();
+        apply_lr_balance(&tx, -8).unwrap();
         apply_audio_limiter(&tx, false).unwrap();
         let sent = tx.sent.borrow();
         // 0x0900 payload 01 00 01 -> 05 5A 05 00 00 09 01 00 01
         assert_eq!(&sent[0][3..12], &[0x05, 0x5A, 0x05, 0x00, 0x00, 0x09, 0x01, 0x00, 0x01]);
-        // 0x0036 payload 01 05 -> 05 5A 04 00 36 00 01 05
-        assert_eq!(&sent[1][3..11], &[0x05, 0x5A, 0x04, 0x00, 0x36, 0x00, 0x01, 0x05]);
+        // 0x0036 step -8 -> payload 01 5C -> 05 5A 04 00 36 00 01 5C
+        assert_eq!(&sent[1][3..11], &[0x05, 0x5A, 0x04, 0x00, 0x36, 0x00, 0x01, 0x5C]);
         // 0x0050 payload 00 -> 05 5A 03 00 50 00 00
         assert_eq!(&sent[2][3..10], &[0x05, 0x5A, 0x03, 0x00, 0x50, 0x00, 0x00]);
     }
@@ -909,12 +927,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_lr_balance_full_reads_on_and_level() {
-        // Real capture: 05 5B 05 00 37 00 | status 00, on 00, level 00
-        let mut rep = [0u8; REPORT_SIZE];
-        let b = [0x07u8, 0x00, 0x80, 0x05, 0x5B, 0x05, 0x00, 0x37, 0x00, 0x00, 0x01, 0xFD];
-        rep[..b.len()].copy_from_slice(&b);
-        assert_eq!(parse_lr_balance_full(&rep), Some((true, 0xFD)));
+    fn parse_lr_balance_full_maps_wire_to_step() {
+        let mk = |hi: u8, lo: u8| {
+            let mut rep = [0u8; REPORT_SIZE];
+            let b = [0x07u8, 0x00, 0x80, 0x05, 0x5B, 0x05, 0x00, 0x37, 0x00, 0x00, hi, lo];
+            rep[..b.len()].copy_from_slice(&b);
+            rep
+        };
+        assert_eq!(parse_lr_balance_full(&mk(0x01, 0x54)), Some(-16)); // real capture, full left
+        assert_eq!(parse_lr_balance_full(&mk(0x01, 0x74)), Some(16)); // real capture, full right
+        assert_eq!(parse_lr_balance_full(&mk(0x01, 0x5C)), Some(-8));
+        assert_eq!(parse_lr_balance_full(&mk(0x01, 0x64)), Some(0));
+        assert_eq!(parse_lr_balance_full(&mk(0x00, 0x00)), Some(0)); // never set
+        assert_eq!(parse_lr_balance_full(&mk(0x01, 0x80)), None); // out of scale
+    }
+
+    #[test]
+    fn lr_balance_step_is_clamped() {
+        let tx = MockTx::new();
+        apply_lr_balance(&tx, 100).unwrap();
+        apply_lr_balance(&tx, -100).unwrap();
+        let sent = tx.sent.borrow();
+        assert_eq!(&sent[0][9..11], &[0x01, 0x74]);
+        assert_eq!(&sent[1][9..11], &[0x01, 0x54]);
     }
 
     #[test]
