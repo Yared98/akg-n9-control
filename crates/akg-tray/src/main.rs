@@ -339,6 +339,10 @@ struct Ui {
     submenu_va_level: Submenu,
     va_levels: Vec<CheckMenuItem>,
 
+    // Grouping submenus (Voice, Headset); `submenu_recursos` is the Audio group.
+    submenu_voice: Submenu,
+    submenu_headset: Submenu,
+
     // Spatial sound — "radio" checkboxes: Off / Movie / Music / Game.
     submenu_spatial: Submenu,
     mi_sp_off: CheckMenuItem,
@@ -435,19 +439,11 @@ impl Ui {
         let mi_low_eq = CheckMenuItem::new(i18n.t("menu.low_volume_eq"), true, false, None);
         let mi_pause = CheckMenuItem::new(i18n.t("menu.pause_on_remove"), true, false, None);
         let mi_va = CheckMenuItem::new(i18n.t("menu.voiceaware"), true, false, None);
-        let submenu_recursos = Submenu::new(i18n.t("menu.features"), true);
+        // Audio group: sound quality and protection.
+        let submenu_recursos = Submenu::new(i18n.t("menu.audio"), true);
         submenu_recursos
-            .append_items(&[
-                &mi_lim,
-                &mi_chat,
-                &mi_hr,
-                &mi_ss,
-                &mi_lr,
-                &mi_low_eq,
-                &mi_pause,
-                &mi_va,
-            ])
-            .expect("submenu features");
+            .append_items(&[&mi_hr, &mi_lim, &mi_ss, &mi_low_eq, &mi_lr])
+            .expect("submenu audio");
 
         let va_levels: Vec<CheckMenuItem> = (1..=5)
             .map(|n| {
@@ -510,6 +506,26 @@ impl Ui {
         let mi_shutdown = MenuItem::new(i18n.t("menu.power_off"), true, None);
         let mi_quit = MenuItem::new(i18n.t("menu.quit"), true, None);
 
+        // Voice group: everything about talking and hearing yourself/others.
+        let submenu_voice = Submenu::new(i18n.t("menu.voice"), true);
+        submenu_voice
+            .append_items(&[&mi_stc, &mi_chat, &mi_va, &submenu_va_level])
+            .expect("submenu voice");
+
+        // Headset group: behaviour and housekeeping (power off last, away from the top).
+        let submenu_headset = Submenu::new(i18n.t("menu.headset"), true);
+        submenu_headset
+            .append_items(&[
+                &mi_vp,
+                &mi_pause,
+                &submenu_autooff,
+                &PredefinedMenuItem::separator(),
+                &submenu_diag,
+                &PredefinedMenuItem::separator(),
+                &mi_shutdown,
+            ])
+            .expect("submenu headset");
+
         menu.append_items(&[
             &mi_bat,
             &mi_fw,
@@ -520,17 +536,13 @@ impl Ui {
             &mi_amb,
             &submenu_level,
             &PredefinedMenuItem::separator(),
-            &mi_vp,
-            &mi_stc,
-            &submenu_autooff,
-            &submenu_recursos,
-            &submenu_va_level,
             &submenu_spatial,
-            &submenu_diag,
+            &submenu_recursos,
+            &submenu_voice,
+            &submenu_headset,
             &PredefinedMenuItem::separator(),
             &mi_find,
             &PredefinedMenuItem::separator(),
-            &mi_shutdown,
             &submenu_lang,
             &PredefinedMenuItem::separator(),
             &mi_quit,
@@ -563,6 +575,8 @@ impl Ui {
                 mi_va,
                 submenu_va_level,
                 va_levels,
+                submenu_voice,
+                submenu_headset,
                 submenu_spatial,
                 mi_sp_off,
                 mi_sp_movie,
@@ -608,7 +622,7 @@ impl Ui {
 
         self.mi_find.set_text(i18n.t("menu.find_headphones"));
 
-        self.submenu_recursos.set_text(i18n.t("menu.features"));
+        self.submenu_recursos.set_text(i18n.t("menu.audio"));
         self.mi_lim.set_text(i18n.t("menu.limiter"));
         self.mi_chat.set_text(i18n.t("menu.chat_optimizer"));
         self.mi_hr.set_text(i18n.t("menu.hi_res"));
@@ -619,6 +633,8 @@ impl Ui {
         self.mi_va.set_text(i18n.t("menu.voiceaware"));
 
         self.submenu_va_level.set_text(i18n.t("menu.voiceaware_level"));
+        self.submenu_voice.set_text(i18n.t("menu.voice"));
+        self.submenu_headset.set_text(i18n.t("menu.headset"));
         for (i, it) in self.va_levels.iter().enumerate() {
             it.set_text(i18n.tf("menu.level_n", &[("n", &(i + 1).to_string())]));
         }
